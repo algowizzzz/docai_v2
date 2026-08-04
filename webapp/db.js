@@ -52,6 +52,8 @@ const DEFAULT_STANDARD = {
   h3: { sizePt: 12, color: "00629B", bold: true },
   headerText: "{filename}",
   footerPageNumber: true,
+  cellFill: "E8F0F7",
+  inferH1Pt: 20, inferH2Pt: 15, inferH3Pt: 13,
   metadataTable: true,
   metadataFields: ["Document Owner", "Date", "Sponsor", "Department",
                    "Status", "Classification", "Version", "Review Date"],
@@ -116,6 +118,18 @@ const runs = {
   get: id => db.prepare("SELECT * FROM runs WHERE id=?").get(id)
 };
 
+db.exec(`CREATE TABLE IF NOT EXISTS std_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT, user_name TEXT, doc_id TEXT,
+  action TEXT, details TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+const stdLog = {
+  add: (u, docId, action, details) =>
+    db.prepare("INSERT INTO std_log (user_id, user_name, doc_id, action, details) VALUES (?,?,?,?,?)")
+      .run(u?.sub || null, u?.name || null, docId || null, action, details || "")
+};
+
 // ---------- chat audit log (Q&A + scope; full document context is NOT stored) ----------
 const chatLog = {
   add: (u, scope, words, q, a) =>
@@ -133,4 +147,4 @@ if (groups.list().length === 0) {
   prompts.add(gid, "summary", "Executive summary", "Write an executive summary of the findings below for a risk committee. Be concise.");
 }
 
-module.exports = { db, groups, prompts, runs, chatLog, settings, DEFAULT_STANDARD };
+module.exports = { db, groups, prompts, runs, chatLog, stdLog, settings, DEFAULT_STANDARD };

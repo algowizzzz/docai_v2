@@ -290,7 +290,14 @@
     return key.split("_v")[0] || null;
   }
 
-  function stdRun(btn, pendingText, prep, command, doneText) {
+  function audit(action, details) {
+    fetch("/api/stdlog", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ docId: stdDocId(), action: action, details: details || "" })
+    }).catch(function () {});
+  }
+
+  function stdRun(btn, pendingText, prep, command, doneText, auditAction) {
     if (!STDCFG) return;
     btn.disabled = true;
     var pending = stdNote("sys", pendingText);
@@ -299,15 +306,95 @@
       window.Asc.plugin.callCommand(command, false, true, function (r) {
         pending.remove();
         if (String(r).indexOf("ERROR") === 0) stdNote("sys", "Could not apply: " + r);
-        else stdNote("msg", doneText);
+        else {
+          stdNote("msg", doneText);
+          if (auditAction) audit(auditAction, String(r).slice(0, 300));
+        }
         btn.disabled = false;
       });
     });
   }
 
+  var applyArmed = false;
   document.getElementById("stdapply").onclick = function () {
+    var btn = this;
     Asc.scope.docname = (window.Asc.plugin.info && window.Asc.plugin.info.documentTitle) || "Document";
     var docId = stdDocId();
+
+    if (!applyArmed) {
+      // ---- dry run: count what WOULD change, then arm the button ----
+      btn.disabled = true;
+      var pend = stdNote("sys", "Checking what will change…");
+      (docId
+        ? fetch("/api/docs/" + docId + "/shading").then(function (r) { return r.ok ? r.json() : { tables: null }; }).catch(function () { return { tables: null }; })
+        : Promise.resolve({ tables: null })
+      ).then(function (j) {
+        var cells = 0;
+        (j.tables || []).forEach(function (tb) {
+          var headerRow = tb[0] && tb[0].some(function (x) { return x; });
+          tb.forEach(function (row, ri) {
+            row.forEach(function (sh) { if (sh || (headerRow && ri === 0)) cells++; });
+          });
+        });
+        Asc.scope.cfg = STDCFG;
+        window.Asc.plugin.callCommand(function () {
+          try {
+            var cfg = Asc.scope.cfg;
+            var doc = Api.GetDocument();
+            var styled = 0, inferred = 0, paras = 0;
+            function scan(el) {
+              try {
+                var t = el.GetClassType ? el.GetClassType() : "";
+                if (t === "paragraph") {
+                  paras++;
+                  var sName = "";
+                  try { var st = el.GetStyle(); sName = st ? String(st.GetName()) : ""; } catch (e) {}
+                  if (/^(heading\s*[123]|title)/i.test(sName)) { styled++; return; }
+                  var sizeHalf = 0, txtLen = 0;
+                  try { txtLen = String(el.GetText() || "").trim().length; } catch (e) {}
+                  try {
+                    var r0 = el.GetElement(0);
+                    if (r0 && r0.GetClassType && r0.GetClassType() === "run") {
+                      var tp0 = r0.GetTextPr();
+                      if (tp0 && tp0.GetFontSize) sizeHalf = tp0.GetFontSize() || 0;
+                    }
+                  } catch (e) {}
+                  if (txtLen > 0 && txtLen < 120 && sizeHalf >= (cfg.inferH3Pt || 13) * 2) inferred++;
+                } else if (t === "table") {
+                  for (var r2 = 0; r2 < el.GetRowsCount(); r2++) {
+                    var row = el.GetRow(r2);
+                    for (var c2 = 0; c2 < row.GetCellsCount(); c2++) {
+                      var content = row.GetCell(c2).GetContent();
+                      for (var k = 0; k < content.GetElementsCount(); k++) scan(content.GetElement(k));
+                    }
+                  }
+                }
+              } catch (e) {}
+            }
+            for (var i = 0; i < doc.GetElementsCount(); i++) scan(doc.GetElement(i));
+            return "PLAN:" + JSON.stringify({ styled: styled, inferred: inferred, paras: paras });
+          } catch (e) { return "ERROR: " + e.message; }
+        }, false, false, function (r) {
+          pend.remove();
+          btn.disabled = false;
+          if (String(r).indexOf("PLAN:") === 0) {
+            var p = JSON.parse(String(r).slice(5));
+            stdNote("msg", "Will restyle " + p.styled + " styled heading" + (p.styled === 1 ? "" : "s") +
+              ", infer " + p.inferred + " unstyled heading" + (p.inferred === 1 ? "" : "s") +
+              ", re-shade " + cells + " table cell" + (cells === 1 ? "" : "s") +
+              ", and normalize " + p.paras + " paragraphs. Click again to confirm.");
+            applyArmed = true;
+            btn.textContent = "Confirm — apply standard";
+          } else {
+            stdNote("sys", "Could not check: " + r);
+          }
+        });
+      });
+      return;
+    }
+
+    applyArmed = false;
+    btn.textContent = "Apply standard formatting";
     stdRun(this, "Applying standard…", function () {
       // cell shading matrix comes from the server (plugin API has no getters)
       return (docId
@@ -398,9 +485,9 @@
             } catch (e) {}
             var h = null;
             if (txtLen > 0 && txtLen < 120) {
-              if (sizeHalf >= 40) h = cfg.h1;
-              else if (sizeHalf >= 30) h = cfg.h2;
-              else if (sizeHalf >= 26) h = cfg.h3;
+              if (sizeHalf >= (cfg.inferH1Pt || 20) * 2) h = cfg.h1;
+              else if (sizeHalf >= (cfg.inferH2Pt || 15) * 2) h = cfg.h2;
+              else if (sizeHalf >= (cfg.inferH3Pt || 13) * 2) h = cfg.h3;
             }
             if (h) {
               try { p.SetStyle(doc.GetStyle(h === cfg.h1 ? "Heading 1" : h === cfg.h2 ? "Heading 2" : "Heading 3")); } catch (e) {}
@@ -445,7 +532,8 @@
                   // row becomes uniformly light blue
                   var reshaded = false;
                   if (wasShaded || (headerRow && r2 === 0)) {
-                    try { cell.SetBackgroundColor(232, 240, 247, false); shadedCells++; reshaded = true; } catch (e) {}
+                    var cf = hex(cfg.cellFill || "E8F0F7");
+                    try { cell.SetBackgroundColor(cf[0], cf[1], cf[2], false); shadedCells++; reshaded = true; } catch (e) {}
                   }
                   var content = cell.GetContent();
                   for (var k = 0; k < content.GetElementsCount(); k++) walk(content.GetElement(k), reshaded);
@@ -459,7 +547,7 @@
 
         return "OK: " + log.join(", ");
       } catch (e) { return "ERROR: " + e.message; }
-    }, "Standard formatting applied — styles enforced across the document (including direct formatting on headings), header and footer set. Previous state is in version history.");
+    }, "Standard formatting applied — styles enforced across the document (including direct formatting on headings), header and footer set. Previous state is in version history.", "apply-standard");
   };
 
   function stdTableCommand() {
@@ -478,10 +566,15 @@
         if (bold) pr.SetBold(true);
         p.AddElement(r);
         if (!content.GetElement(0)) content.Push(p);
-        if (shade) { try { cell.SetBackgroundColor(232, 240, 247, false); } catch (e) {} }
+        if (shade) {
+          var cf2 = (function (h) { return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)]; })(cfg.cellFill || "E8F0F7");
+          try { cell.SetBackgroundColor(cf2[0], cf2[1], cf2[2], false); } catch (e) {}
+        }
       }
       function brandTable(cols, rows) {
         var t = Api.CreateTable(cols, rows);
+        // some builds swap CreateTable's (cols, rows) — verify and rebuild
+        try { if (t.GetRowsCount && t.GetRowsCount() !== rows) t = Api.CreateTable(rows, cols); } catch (e) {}
         try { t.SetWidth("percent", 100); } catch (e) {}
         var b = hex("AEB6BD");
         ["Top","Bottom","Left","Right","InsideH","InsideV"].forEach(function (side) {
@@ -519,7 +612,20 @@
   document.getElementById("insmeta").onclick = function () {
     Asc.scope.tableKind = "meta";
     stdRun(this, "Inserting metadata table…", function () { return Promise.resolve(); },
-        stdTableCommand, "Metadata table inserted at the cursor.");
+        stdTableCommand, "Metadata table inserted at the cursor.", "insert-metadata-table");
+  };
+
+  document.getElementById("instoc").onclick = function () {
+    stdRun(this, "Inserting table of contents…", function () { return Promise.resolve(); }, function () {
+      try {
+        var doc = Api.GetDocument();
+        if (typeof doc.AddTableOfContents === "function") {
+          doc.AddTableOfContents();
+          return "OK: toc";
+        }
+        return "ERROR: table of contents is not supported by this editor build";
+      } catch (e) { return "ERROR: " + e.message; }
+    }, "Table of contents inserted at the cursor (uses the document's heading styles — run Apply first on unstyled documents).", "insert-toc");
   };
 
   document.getElementById("insvers").onclick = function () {
@@ -537,6 +643,6 @@
           };
         });
       });
-    }, stdTableCommand, "Version history table inserted at the cursor.");
+    }, stdTableCommand, "Version history table inserted at the cursor.", "insert-version-table");
   };
 })(window);

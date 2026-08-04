@@ -381,6 +381,13 @@ app.get("/api/docs/:id/shading", (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// standardization audit trail (who standardized what, when)
+app.post("/api/stdlog", (req, res) => {
+  const { docId, action, details } = req.body || {};
+  store.stdLog.add(req.user, docId, String(action || ""), String(details || "").slice(0, 500));
+  res.json({ ok: true });
+});
+
 // ---------- document standard (governed from /prompts, applied by the Standardize plugin) ----------
 app.get("/api/standard", (req, res) =>
   res.json(store.settings.get("standard", store.DEFAULT_STANDARD)));
@@ -902,6 +909,13 @@ app.get("/prompts", auth.requireAdmin, (req, res) => {
         </div>
         <div class="formrow"><span style="width:32px;font-size:12px;color:var(--ink-2)">H3</span>
           <input type="text" id="s_h3size" style="width:52px"><input type="text" id="s_h3color" style="width:76px">
+          <span style="font-size:12px;color:var(--ink-2)">Cell fill</span>
+          <input type="text" id="s_cellfill" style="width:76px">
+        </div>
+        <div class="formrow" style="font-size:12px;color:var(--ink-2)">Heading inference (unstyled docs), min pt:
+          H1 <input type="text" id="s_ih1" style="width:44px">
+          H2 <input type="text" id="s_ih2" style="width:44px">
+          H3 <input type="text" id="s_ih3" style="width:44px">
         </div>
         <div class="formrow"><input type="text" id="s_header" placeholder="Header text ({filename} = document name)"></div>
         <div class="formrow" style="font-size:12.5px;gap:16px">
@@ -1039,6 +1053,8 @@ app.get("/prompts", auth.requireAdmin, (req, res) => {
       $("s_h2size").value = s.h2.sizePt; $("s_h2color").value = s.h2.color;
       $("s_h3size").value = s.h3.sizePt; $("s_h3color").value = s.h3.color;
       $("s_header").value = s.headerText || "";
+      $("s_cellfill").value = s.cellFill || "E8F0F7";
+      $("s_ih1").value = s.inferH1Pt || 20; $("s_ih2").value = s.inferH2Pt || 15; $("s_ih3").value = s.inferH3Pt || 13;
       $("s_pagenum").checked = !!s.footerPageNumber;
       $("s_meta").checked = !!s.metadataTable;
       $("s_vers").checked = !!s.versionTable;
@@ -1051,6 +1067,8 @@ app.get("/prompts", auth.requireAdmin, (req, res) => {
         h2: { sizePt: +$("s_h2size").value || 14, color: $("s_h2color").value.trim() || "0079C1", bold: true },
         h3: { sizePt: +$("s_h3size").value || 12, color: $("s_h3color").value.trim() || "00629B", bold: true },
         headerText: $("s_header").value.trim(),
+        cellFill: $("s_cellfill").value.trim() || "E8F0F7",
+        inferH1Pt: +$("s_ih1").value || 20, inferH2Pt: +$("s_ih2").value || 15, inferH3Pt: +$("s_ih3").value || 13,
         footerPageNumber: $("s_pagenum").checked,
         metadataTable: $("s_meta").checked,
         versionTable: $("s_vers").checked,
