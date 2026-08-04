@@ -68,16 +68,31 @@ function meta(id) { return JSON.parse(fs.readFileSync(path.join(docDir(id), "met
 // ---------- upload ----------
 app.post("/upload", upload.single("file"), (req, res) => {
   if (!req.file || !req.file.originalname.toLowerCase().endsWith(".docx")) {
-    return res.status(400).send("Only .docx files in the pilot");
+    if (req.file) fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: "Only .docx files are supported" });
   }
   const id = crypto.randomBytes(6).toString("hex");
+  const buf = fs.readFileSync(req.file.path);
+  // validity check: zip magic + OOXML main part present in the central directory
+  const valid = buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf.includes("word/document.xml");
   fs.mkdirSync(docDir(id));
   fs.copyFileSync(req.file.path, path.join(docDir(id), "v1.docx"));
   fs.unlinkSync(req.file.path);
   fs.writeFileSync(path.join(docDir(id), "meta.json"),
     JSON.stringify({ title: req.file.originalname, uploaded: new Date().toISOString(),
+                     status: valid ? "ready" : "failed",
                      owner: { id: req.user.sub, name: req.user.name } }));
-  res.redirect(`/doc/${id}`);
+  res.json({ id, title: req.file.originalname, status: valid ? "ready" : "failed" });
+});
+
+// editor reports an unopenable document -> mark failed (shows on the library)
+app.post("/api/docs/:id/error", (req, res) => {
+  const id = req.params.id;
+  if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
+  const m = meta(id); m.status = "failed";
+  fs.writeFileSync(path.join(docDir(id), "meta.json"), JSON.stringify(m));
+  res.json({ ok: true });
 });
 
 // ---------- serve document files to Document Server ----------
@@ -358,11 +373,13 @@ app.get("/", (req, res) => {
     .filter(d => fs.existsSync(path.join(STORAGE, d, "meta.json")))
     .filter(d => canAccessDoc(req.user, d))
     .map(id => {
+      const m = meta(id);
       const v = latest(id);
       const mtime = fs.statSync(path.join(docDir(id), `v${v}.docx`)).mtime;
-      return { id, title: meta(id).title, v, mtime };
+      return { id, title: m.title, v, mtime, status: m.status || "ready" };
     })
     .sort((a, b) => b.mtime - a.mtime);
+  const TAG = { ready: '<span class="tag ok">Ready</span>', failed: '<span class="tag fail">Failed</span>' };
   const rows = docs.map(d => `
     <a class="row" href="/doc/${d.id}" data-title="${d.title.toLowerCase()}">
       <svg class="ficon" viewBox="0 0 20 20" fill="none"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="var(--bmo-blue)" stroke-width="1.4"/><path d="M12 2v4h4" stroke="var(--bmo-blue)" stroke-width="1.4"/></svg>
@@ -370,6 +387,7 @@ app.get("/", (req, res) => {
         <div class="rtitle">${d.title}</div>
         <div class="rmeta">v${d.v} · Updated ${fmtDate(d.mtime)}</div>
       </div>
+      ${TAG[d.status] || TAG.ready}
       <svg class="chev" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="var(--ink-3)" stroke-width="1.6" stroke-linecap="round"/></svg>
     </a>`).join("");
   res.send(`<!doctype html><html><head><meta charset="utf-8">
@@ -398,7 +416,13 @@ app.get("/", (req, res) => {
     .rmeta{font-size:12px;color:var(--ink-2);margin-top:2px}
     .chev{width:8px;height:14px;flex:none}
     .empty{padding:64px 24px;text-align:center;color:var(--ink-2);font-size:14px}
-    #prog{display:none;margin-top:10px;font-size:12px;color:var(--bmo-blue)}
+    #prog{display:none;margin-top:12px;font-size:12px;color:var(--bmo-blue)}
+    .tag{font-size:11px;font-weight:600;border-radius:980px;padding:3px 10px;flex:none}
+    .tag.ok{background:rgba(52,168,83,.12);color:#1e7e34}
+    .tag.fail{background:rgba(192,0,0,.1);color:#C00000}
+    .tag.prog{background:rgba(0,121,193,.1);color:var(--bmo-blue)}
+    .bar{height:4px;border-radius:2px;background:var(--line);margin-top:8px;overflow:hidden;display:none}
+    .bar i{display:block;height:100%;width:0;background:var(--bmo-blue);transition:width .2s}
   </style></head><body>
   <div class="topbar">
     <img class="brandlogo" src="/brand/bmo-logo.png" alt="BMO"><span class="divider"></span>
@@ -417,8 +441,9 @@ app.get("/", (req, res) => {
       <div class="big">Drop a Word document here</div>
       <div class="hint">or click to choose a .docx file</div>
       <div class="trust">Originals are preserved — every edit becomes a new version.</div>
-      <div id="prog">Uploading…</div>
-      <input id="file" type="file" accept=".docx" hidden>
+      <div id="prog"></div>
+      <div class="bar" id="bar"><i id="barfill"></i></div>
+      <input id="file" type="file" accept=".docx" multiple hidden>
     </div>
     <div class="list" id="list">${rows || '<div class="empty">No documents yet. Drop a Word file above to begin.</div>'}</div>
   </div>
@@ -427,13 +452,29 @@ app.get("/", (req, res) => {
     drop.addEventListener("click", () => file.click());
     ["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
     ["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("over"); }));
-    drop.addEventListener("drop", ev => upload(ev.dataTransfer.files[0]));
-    file.addEventListener("change", () => upload(file.files[0]));
-    function upload(f) {
-      if (!f || !f.name.toLowerCase().endsWith(".docx")) { alert("Please choose a .docx file"); return; }
-      document.getElementById("prog").style.display = "block";
-      const fd = new FormData(); fd.append("file", f);
-      fetch("/upload", { method: "POST", body: fd }).then(r => { window.location = r.url; });
+    drop.addEventListener("drop", ev => upload(ev.dataTransfer.files));
+    file.addEventListener("change", () => upload(file.files));
+    async function upload(fileList) {
+      const files = [...fileList].filter(f => f.name.toLowerCase().endsWith(".docx"));
+      if (!files.length) { alert("Please choose .docx files"); return; }
+      const prog = document.getElementById("prog"), bar = document.getElementById("bar"),
+            fill = document.getElementById("barfill");
+      prog.style.display = "block"; bar.style.display = "block";
+      let ok = 0, fail = 0, lastId = null;
+      for (let i = 0; i < files.length; i++) {
+        prog.textContent = "Uploading " + (i + 1) + " of " + files.length + " — " + files[i].name;
+        fill.style.width = Math.round(100 * i / files.length) + "%";
+        try {
+          const fd = new FormData(); fd.append("file", files[i]);
+          const r = await fetch("/upload", { method: "POST", body: fd });
+          const j = await r.json();
+          if (r.ok && j.status === "ready") { ok++; lastId = j.id; } else fail++;
+        } catch (e) { fail++; }
+      }
+      fill.style.width = "100%";
+      prog.textContent = ok + " uploaded" + (fail ? ", " + fail + " failed" : "");
+      if (files.length === 1 && ok === 1) { window.location = "/doc/" + lastId; }
+      else setTimeout(() => window.location.reload(), 600);
     }
     document.getElementById("search").addEventListener("input", e => {
       const q = e.target.value.toLowerCase();
@@ -519,6 +560,22 @@ app.get("/doc/:id", (req, res) => {
   </div>
   <div id="editor"></div>
 
+  <div id="loading">
+    <div class="spin"></div>
+    <div class="ltext">Opening ${m.title}…</div>
+    <div class="lsub">Large documents can take a few seconds on first open.</div>
+  </div>
+  <style>
+    #loading{position:fixed;inset:52px 0 0 0;background:var(--bg);z-index:30;display:flex;
+             flex-direction:column;align-items:center;justify-content:center;gap:12px}
+    .spin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--bmo-blue);
+          border-radius:50%;animation:sp 0.9s linear infinite}
+    @keyframes sp{to{transform:rotate(360deg)}}
+    .ltext{font-size:14px;font-weight:600;color:var(--ink)}
+    .lsub{font-size:12px;color:var(--ink-2)}
+    #loading.err .spin{display:none}
+  </style>
+
   <div class="scrim" id="scrim"></div>
   <div class="drawer" id="drawer">
     <div class="dhead"><span>Version history</span>
@@ -575,7 +632,25 @@ app.get("/doc/:id", (req, res) => {
     }
   </script>
   <script src="${DS_PUBLIC}/web-apps/apps/api/documents/api.js"></script>
-  <script>new DocsAPI.DocEditor("editor", ${JSON.stringify(config)});</script>
+  <script>
+    var cfg = ${JSON.stringify(config)};
+    cfg.events = {
+      onDocumentReady: function () {
+        var l = document.getElementById("loading");
+        if (l) l.remove();
+      },
+      onError: function (e) {
+        var l = document.getElementById("loading");
+        if (l) {
+          l.classList.add("err");
+          l.querySelector(".ltext").textContent = "This document could not be opened.";
+          l.querySelector(".lsub").textContent = (e && e.data && e.data.errorDescription) || "It may be corrupted or in an unsupported format.";
+        }
+        fetch("/api/docs/${id}/error", { method: "POST" });
+      }
+    };
+    new DocsAPI.DocEditor("editor", cfg);
+  </script>
   </body></html>`);
 });
 
