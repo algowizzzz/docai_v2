@@ -13,3 +13,8 @@ work/
 *.log
 webapp/pdfenv/
 webapp/.env
+onlyoffice-documentserver-win.exe
+node_modules.zip
+pw-browsers-win64.zip
+python-wheels-win64.zip
+offline-bundle.sha256
