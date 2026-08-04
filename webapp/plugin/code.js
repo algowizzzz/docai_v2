@@ -352,9 +352,78 @@
           footer.Push(fp);
           log.push("footer");
         }
+
+        // ---- enforcement pass: direct (run-level) formatting beats styles in
+        // Word, so force the standard onto heading/title paragraphs and
+        // normalize the body font everywhere, tables included.
+        var forced = 0;
+        function forceRange(rg, font, sizePt, colorHex, bold) {
+          try { rg.SetFontFamily(font); } catch (e) {}
+          if (sizePt) { try { rg.SetFontSize(sizePt * 2); } catch (e) {} }
+          if (colorHex) {
+            var c = hex(colorHex);
+            try { rg.SetColor(c[0], c[1], c[2]); }
+            catch (e) { try { rg.SetColor(Api.CreateColorFromRGB(c[0], c[1], c[2])); } catch (e2) {} }
+          }
+          if (bold !== undefined) { try { rg.SetBold(!!bold); } catch (e) {} }
+        }
+        function forcePara(p) {
+          var sName = "";
+          try { var st = p.GetStyle(); sName = st ? String(st.GetName()) : ""; } catch (e) {}
+          var rg;
+          try { rg = p.GetRange(); } catch (e) { return; }
+          if (!rg) return;
+          if (/^(heading\s*1|title)/i.test(sName)) { forceRange(rg, cfg.body.font, cfg.h1.sizePt, cfg.h1.color, cfg.h1.bold); forced++; }
+          else if (/^heading\s*2/i.test(sName)) { forceRange(rg, cfg.body.font, cfg.h2.sizePt, cfg.h2.color, cfg.h2.bold); forced++; }
+          else if (/^heading\s*3/i.test(sName)) { forceRange(rg, cfg.body.font, cfg.h3.sizePt, cfg.h3.color, cfg.h3.bold); forced++; }
+          else {
+            // no style semantics (common in generated docs): infer headings
+            // from font size on short paragraphs, then assign the REAL style
+            var sizeHalf = 0, txtLen = 0;
+            try { txtLen = String(p.GetText() || "").trim().length; } catch (e) {}
+            try {
+              var r0 = p.GetElement(0);
+              if (r0 && r0.GetClassType && r0.GetClassType() === "run") {
+                var tp0 = r0.GetTextPr();
+                if (tp0 && tp0.GetFontSize) sizeHalf = tp0.GetFontSize() || 0;
+              }
+            } catch (e) {}
+            var h = null;
+            if (txtLen > 0 && txtLen < 120) {
+              if (sizeHalf >= 40) h = cfg.h1;
+              else if (sizeHalf >= 30) h = cfg.h2;
+              else if (sizeHalf >= 26) h = cfg.h3;
+            }
+            if (h) {
+              try { p.SetStyle(doc.GetStyle(h === cfg.h1 ? "Heading 1" : h === cfg.h2 ? "Heading 2" : "Heading 3")); } catch (e) {}
+              forceRange(rg, cfg.body.font, h.sizePt, h.color, h.bold);
+              forced++;
+            } else {
+              forceRange(rg, cfg.body.font);
+            }
+          }
+        }
+        function walk(el) {
+          try {
+            var t = el.GetClassType ? el.GetClassType() : "";
+            if (t === "paragraph") forcePara(el);
+            else if (t === "table") {
+              for (var r2 = 0; r2 < el.GetRowsCount(); r2++) {
+                var row = el.GetRow(r2);
+                for (var c2 = 0; c2 < row.GetCellsCount(); c2++) {
+                  var content = row.GetCell(c2).GetContent();
+                  for (var k = 0; k < content.GetElementsCount(); k++) walk(content.GetElement(k));
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        for (var i2 = 0; i2 < doc.GetElementsCount(); i2++) walk(doc.GetElement(i2));
+        log.push("enforced(" + forced + " headings)");
+
         return "OK: " + log.join(", ");
       } catch (e) { return "ERROR: " + e.message; }
-    }, "Standard formatting applied — styles, header and footer. Previous state is in version history.");
+    }, "Standard formatting applied — styles enforced across the document (including direct formatting on headings), header and footer set. Previous state is in version history.");
   };
 
   function stdTableCommand() {
