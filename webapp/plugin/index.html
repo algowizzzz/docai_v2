@@ -11,10 +11,16 @@
   html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
             font-size:13px;color:var(--ink);display:flex;flex-direction:column;background:var(--bg);
             -webkit-font-smoothing:antialiased}
-  .tabs{display:flex;gap:2px;padding:10px 12px 0;background:var(--card);border-bottom:1px solid var(--line)}
-  .tab{flex:1;text-align:center;padding:8px 4px;font-weight:500;color:var(--ink2);cursor:pointer;
-       border-bottom:2px solid transparent;font-size:13px}
-  .tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+  .tabs{display:flex;gap:6px;padding:10px 10px;background:var(--card);border-bottom:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:9px 6px;font-weight:600;color:var(--ink2);cursor:pointer;
+       font-size:12.5px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+  .tab.active{color:#fff;background:var(--blue);border-color:var(--blue)}
+  .stdlist2{margin:0 12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:2px 12px}
+  .stditem2{font-size:12px;padding:7px 0;border-bottom:1px solid var(--line);color:var(--ink2)}
+  .stditem2:last-child{border-bottom:0}
+  .stditem2 b{color:var(--ink);font-weight:600}
+  .send.alt{background:var(--card);color:var(--blue);border:1px solid var(--line);margin-top:0}
+  .send.alt:hover{border-color:var(--blue);background:rgba(0,121,193,.05)}
   .pane{flex:1;display:none;flex-direction:column;min-height:0}
   .pane.active{display:flex}
   .seg{display:flex;background:#eeeef0;border-radius:9px;padding:2px;margin:12px 12px 0}
@@ -81,6 +87,7 @@
   <div class="tabs">
     <div class="tab active" data-pane="chat">Chat</div>
     <div class="tab" data-pane="pchain">AI Analysis</div>
+    <div class="tab" data-pane="std">Standardize</div>
   </div>
 
   <!-- CHAT -->
@@ -93,6 +100,22 @@
     <div class="foot">
       <textarea id="q" placeholder="Ask a question…"></textarea>
       <button class="send" id="send">Send</button>
+    </div>
+  </div>
+
+  <!-- STANDARDIZE -->
+  <div class="pane" id="pane-std">
+    <div class="label">Document standard</div>
+    <div class="stdlist2" id="stdlist"><div class="stditem2">Loading standard…</div></div>
+    <div class="hint" style="margin:8px 12px">Governed by administrators on the AI&nbsp;Analysis page.</div>
+    <div class="label">Insert at cursor</div>
+    <div style="margin:0 12px;display:flex;flex-direction:column;gap:8px">
+      <button class="send alt" id="insmeta">Insert metadata table</button>
+      <button class="send alt" id="insvers">Insert version history table</button>
+    </div>
+    <div id="stdout" style="flex:1;overflow-y:auto;padding:12px"></div>
+    <div class="foot">
+      <button class="send" id="stdapply">Apply standard formatting</button>
     </div>
   </div>
 

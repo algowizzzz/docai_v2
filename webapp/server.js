@@ -47,10 +47,6 @@ app.use("/plugin", (req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
   next();
 }, express.static(path.join(__dirname, "plugin")));
-app.use("/plugin-std", (req, res, next) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  next();
-}, express.static(path.join(__dirname, "plugin-std")));
 app.use("/brand", (req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
   next();
@@ -181,12 +177,14 @@ app.delete("/api/docs/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-// editor reports an unopenable document -> mark failed (shows on the library)
-app.post("/api/docs/:id/error", (req, res) => {
+// editor reports open result -> keep library status truthful (a transient
+// error must not brand a document failed forever; a good open clears it)
+app.post("/api/docs/:id/:result(error|ready)", (req, res) => {
   const id = req.params.id;
   if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
   if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
-  const m = meta(id); m.status = "failed";
+  const m = meta(id);
+  m.status = req.params.result === "error" ? "failed" : "ready";
   fs.writeFileSync(path.join(docDir(id), "meta.json"), JSON.stringify(m));
   res.json({ ok: true });
 });
@@ -655,14 +653,9 @@ app.get("/doc/:id", (req, res) => {
         }
       },
       plugins: {
-        autostart: [req.query.panel === "std"
-          ? "asc.{7A2B9C44-1E55-4D0A-9B33-D00C51ADB2E1}"
-          : "asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}"],
+        autostart: ["asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}"],
         // plugin files are fetched by the BROWSER, so use the browser-facing origin
-        pluginsData: [
-          `http://localhost:${PORT}/plugin/config.json`,
-          `http://localhost:${PORT}/plugin-std/config.json`
-        ]
+        pluginsData: [`http://localhost:${PORT}/plugin/config.json`]
       }
     },
     width: "100%",
@@ -690,10 +683,6 @@ app.get("/doc/:id", (req, res) => {
     <span class="status">${readonly ? `Viewing v${ver} (read-only)` : `v${ver} · Saved`}</span>
     <span class="spacer"></span>
     ${readonly ? `<a class="btn btn-primary" href="/doc/${id}">Back to current</a>` : ""}
-    <span class="pswitch">
-      <a class="${req.query.panel === "std" ? "" : "on"}" href="/doc/${id}">AI Assistant</a>
-      <a class="${req.query.panel === "std" ? "on" : ""}" href="/doc/${id}?panel=std">Standardize</a>
-    </span>
     <button class="btn btn-quiet" id="histbtn">History</button>
     <a class="btn btn-quiet" href="/download/${id}${readonly ? `?v=${ver}` : ""}">Download</a>
   </div>
@@ -777,6 +766,7 @@ app.get("/doc/:id", (req, res) => {
       onDocumentReady: function () {
         var l = document.getElementById("loading");
         if (l) l.remove();
+        fetch("/api/docs/${id}/ready", { method: "POST" });
       },
       onError: function (e) {
         var l = document.getElementById("loading");

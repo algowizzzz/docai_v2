@@ -50,7 +50,7 @@ function isAdmin(s) { return s && (s.role === "admin" || s.role === "superadmin"
 
 // Paths Document Server (not the browser) fetches — no user session exists
 // there by design; DS JWT covers them in production (see AUTH-INTEGRATION.md).
-const OPEN_PREFIXES = ["/sso", "/files/", "/callback/", "/plugin/", "/plugin-std/", "/brand/", "/healthz"];
+const OPEN_PREFIXES = ["/sso", "/files/", "/callback/", "/plugin/", "/brand/", "/healthz"];
 
 function requireAuth(req, res, next) {
   if (OPEN_PREFIXES.some(p => req.path === p || req.path.startsWith(p))) return next();
