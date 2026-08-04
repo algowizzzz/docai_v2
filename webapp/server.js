@@ -199,6 +199,14 @@ app.get("/files/:id/v:ver.docx", (req, res) => {
 
 // ---------- save callback from Document Server ----------
 app.post("/callback/:id", (req, res) => {
+  if (DS_JWT_SECRET) {
+    const hdr = String(req.headers.authorization || "");
+    const tok = hdr.startsWith("Bearer ") ? hdr.slice(7) : (req.body && req.body.token);
+    if (!tok || !verifyJwt(tok)) {
+      console.error(`callback for ${req.params.id} rejected: bad or missing JWT`);
+      return res.status(403).json({ error: 1 });
+    }
+  }
   const { status, url } = req.body || {};
   // status 2 = ready for saving, 6 = force-save
   if ((status === 2 || status === 6) && url) {
@@ -279,6 +287,29 @@ function loadEnv() {
 }
 const ENV = loadEnv();
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY || ENV.deepseek_api_key || null;
+
+/* ---------- Document Server JWT (production) ----------
+ * When ds_jwt_secret is set (webapp/.env or DS_JWT_SECRET env) AND Document
+ * Server has token validation enabled with the same secret, every editor
+ * config is signed and every save-callback is verified. No extra deps —
+ * HS256 via node:crypto. See ONPREM-DEPLOY.md for the DS-side config.
+ */
+const DS_JWT_SECRET = process.env.DS_JWT_SECRET || ENV.ds_jwt_secret || null;
+function b64uJson(o) { return Buffer.from(JSON.stringify(o)).toString("base64url"); }
+function signJwt(payload) {
+  const head = b64uJson({ alg: "HS256", typ: "JWT" });
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", DS_JWT_SECRET).update(head + "." + body).digest("base64url");
+  return `${head}.${body}.${sig}`;
+}
+function verifyJwt(token) {
+  try {
+    const [h, b, s] = String(token).split(".");
+    const expect = crypto.createHmac("sha256", DS_JWT_SECRET).update(h + "." + b).digest("base64url");
+    if (!crypto.timingSafeEqual(Buffer.from(expect), Buffer.from(s))) return null;
+    return JSON.parse(Buffer.from(b, "base64url").toString());
+  } catch (e) { return null; }
+}
 
 async function callLLM({ system, input, reasoning = "medium" }) {
   const words = input && input.trim() ? input.trim().split(/\s+/).length : 0;
@@ -721,6 +752,7 @@ app.get("/doc/:id", (req, res) => {
     width: "100%",
     height: "100%"
   };
+  if (DS_JWT_SECRET) config.token = signJwt(config);
   res.send(`<!doctype html><html><head><meta charset="utf-8"><title>${m.title} — BMO RiskGPT</title>
   <style>${BRAND_CSS}
     html,body{height:100%;overflow:hidden}
