@@ -267,7 +267,7 @@ app.post("/api/worker/chat", async (req, res) => {
  */
 function loadEnv() {
   const out = {};
-  for (const p of [path.join(__dirname, ".env"), "/Users/saadahmed/Desktop/seo/.env"]) {
+  for (const p of [path.join(__dirname, ".env")]) {
     try {
       for (const line of fs.readFileSync(p, "utf8").split("\n")) {
         const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);

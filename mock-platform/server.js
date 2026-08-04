@@ -7,7 +7,7 @@
 const express = require(require("path").join(__dirname, "..", "webapp", "node_modules", "express"));
 const crypto = require("crypto");
 
-const PORT = 3999;
+const PORT = process.env.PORT || 3999;
 const APP_SSO_URL = process.env.APP_SSO_URL || "http://localhost:3001/sso";
 const app = express();
 app.use(express.json());
