@@ -56,7 +56,9 @@ function requireAuth(req, res, next) {
   if (OPEN_PREFIXES.some(p => req.path === p || req.path.startsWith(p))) return next();
   const s = readSession(req);
   if (s) { req.user = s; return next(); }
-  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Not authenticated" });
+  if (req.path.startsWith("/api/") || req.path === "/upload" || req.path.startsWith("/restore/")) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
   res.redirect(PLATFORM_LAUNCH_URL);
 }
 
