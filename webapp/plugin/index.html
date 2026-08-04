@@ -81,7 +81,6 @@
   <div class="tabs">
     <div class="tab active" data-pane="chat">Chat</div>
     <div class="tab" data-pane="pchain">AI Analysis</div>
-    <div class="tab" data-pane="std">Standardize</div>
   </div>
 
   <!-- CHAT -->
@@ -94,26 +93,6 @@
     <div class="foot">
       <textarea id="q" placeholder="Ask a question…"></textarea>
       <button class="send" id="send">Send</button>
-    </div>
-  </div>
-
-  <!-- STANDARDIZE -->
-  <div class="pane" id="pane-std">
-    <div class="label">Document standard</div>
-    <div class="pcwrap">
-      <div class="stdlist">
-        <div class="stditem"><b>Body</b> — Calibri 11pt, dark grey</div>
-        <div class="stditem"><b>Heading 1</b> — 16pt bold, BMO blue</div>
-        <div class="stditem"><b>Heading 2</b> — 14pt bold, BMO blue</div>
-        <div class="stditem"><b>Heading 3</b> — 12pt bold, dark blue</div>
-        <div class="stditem"><b>Header</b> — document file name</div>
-        <div class="stditem"><b>Footer</b> — page number, centred</div>
-      </div>
-      <div class="hint">Applies the standard to the whole document. The previous state stays in version history.</div>
-    </div>
-    <div id="stdout"><div class="sys">Review the standard above, then apply.</div></div>
-    <div class="foot">
-      <button class="send" id="stdapply">Apply standard formatting</button>
     </div>
   </div>
 

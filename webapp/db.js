@@ -43,6 +43,30 @@ db.exec(`
   );
 `);
 try { db.exec("ALTER TABLE runs ADD COLUMN user_id TEXT"); } catch (e) { /* exists */ }
+db.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+
+const DEFAULT_STANDARD = {
+  body: { font: "Calibri", sizePt: 11, color: "1D1D1F" },
+  h1: { sizePt: 16, color: "0079C1", bold: true },
+  h2: { sizePt: 14, color: "0079C1", bold: true },
+  h3: { sizePt: 12, color: "00629B", bold: true },
+  headerText: "{filename}",
+  footerPageNumber: true,
+  metadataTable: true,
+  metadataFields: ["Document Owner", "Date", "Sponsor", "Department",
+                   "Status", "Classification", "Version", "Review Date"],
+  versionTable: true
+};
+
+const settings = {
+  get: (key, fallback) => {
+    const row = db.prepare("SELECT value FROM settings WHERE key=?").get(key);
+    return row ? JSON.parse(row.value) : fallback;
+  },
+  set: (key, value) =>
+    db.prepare("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+      .run(key, JSON.stringify(value))
+};
 
 // ---------- groups ----------
 const groups = {
@@ -109,4 +133,4 @@ if (groups.list().length === 0) {
   prompts.add(gid, "summary", "Executive summary", "Write an executive summary of the findings below for a risk committee. Be concise.");
 }
 
-module.exports = { db, groups, prompts, runs, chatLog };
+module.exports = { db, groups, prompts, runs, chatLog, settings, DEFAULT_STANDARD };

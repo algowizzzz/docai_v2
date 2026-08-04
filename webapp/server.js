@@ -47,6 +47,10 @@ app.use("/plugin", (req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
   next();
 }, express.static(path.join(__dirname, "plugin")));
+app.use("/plugin-std", (req, res, next) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  next();
+}, express.static(path.join(__dirname, "plugin-std")));
 app.use("/brand", (req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
   next();
@@ -330,6 +334,17 @@ app.put("/api/prompts/:id", auth.requireAdmin, (req, res) => {
 app.delete("/api/prompts/:id", auth.requireAdmin, (req, res) => { store.prompts.remove(+req.params.id); res.json({ ok: true }); });
 app.post("/api/promptgroups/:id/reorder", auth.requireAdmin, (req, res) => {
   store.prompts.reorder(+req.params.id, req.body.ids || []); res.json({ ok: true });
+});
+
+// ---------- document standard (governed from /prompts, applied by the Standardize plugin) ----------
+app.get("/api/standard", (req, res) =>
+  res.json(store.settings.get("standard", store.DEFAULT_STANDARD)));
+app.put("/api/standard", auth.requireAdmin, (req, res) => {
+  const cfg = req.body || {};
+  if (!Array.isArray(cfg.metadataFields)) return res.status(400).json({ error: "metadataFields must be a list" });
+  cfg.metadataFields = cfg.metadataFields.map(s => String(s).trim()).filter(Boolean).slice(0, 8);
+  store.settings.set("standard", cfg);
+  res.json({ ok: true });
 });
 
 // ---------- prompt chain: runner ----------
@@ -640,9 +655,14 @@ app.get("/doc/:id", (req, res) => {
         }
       },
       plugins: {
-        autostart: ["asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}"],
+        autostart: [req.query.panel === "std"
+          ? "asc.{7A2B9C44-1E55-4D0A-9B33-D00C51ADB2E1}"
+          : "asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}"],
         // plugin files are fetched by the BROWSER, so use the browser-facing origin
-        pluginsData: [`http://localhost:${PORT}/plugin/config.json`]
+        pluginsData: [
+          `http://localhost:${PORT}/plugin/config.json`,
+          `http://localhost:${PORT}/plugin-std/config.json`
+        ]
       }
     },
     width: "100%",
@@ -654,6 +674,9 @@ app.get("/doc/:id", (req, res) => {
     body{display:flex;flex-direction:column}
     .topbar{flex:none}
     .back{display:flex;align-items:center;gap:8px;color:#fff;font-size:13px;font-weight:500}
+    .pswitch{display:flex;background:rgba(255,255,255,.16);border-radius:980px;padding:2px;gap:2px}
+    .pswitch a{color:#fff;font-size:12px;font-weight:500;padding:4px 12px;border-radius:980px;opacity:.85}
+    .pswitch a.on{background:#fff;color:var(--bmo-blue);opacity:1}
     .doctitle{font-size:14px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40vw}
     .status{font-size:12px;color:rgba(255,255,255,.8)}
     #editor{flex:1}
@@ -667,6 +690,10 @@ app.get("/doc/:id", (req, res) => {
     <span class="status">${readonly ? `Viewing v${ver} (read-only)` : `v${ver} · Saved`}</span>
     <span class="spacer"></span>
     ${readonly ? `<a class="btn btn-primary" href="/doc/${id}">Back to current</a>` : ""}
+    <span class="pswitch">
+      <a class="${req.query.panel === "std" ? "" : "on"}" href="/doc/${id}">AI Assistant</a>
+      <a class="${req.query.panel === "std" ? "on" : ""}" href="/doc/${id}?panel=std">Standardize</a>
+    </span>
     <button class="btn btn-quiet" id="histbtn">History</button>
     <a class="btn btn-quiet" href="/download/${id}${readonly ? `?v=${ver}` : ""}">Download</a>
   </div>
@@ -822,6 +849,34 @@ app.get("/prompts", auth.requireAdmin, (req, res) => {
         <input type="text" id="gname" placeholder="New group name">
         <button class="btn-blue" onclick="createGroup()">Create</button>
       </div>
+
+      <h1 style="margin-top:36px;font-size:20px">Document standard</h1>
+      <div class="sub">Applied by the Standardize panel in the editor.</div>
+      <div class="card" style="padding:16px" id="stdcard">
+        <div class="formrow" style="margin-top:0">
+          <input type="text" id="s_font" placeholder="Body font" style="flex:2">
+          <input type="text" id="s_bodysize" placeholder="pt" style="width:52px">
+          <input type="text" id="s_bodycolor" placeholder="hex" style="width:76px">
+        </div>
+        <div class="formrow"><span style="width:32px;font-size:12px;color:var(--ink-2)">H1</span>
+          <input type="text" id="s_h1size" style="width:52px"><input type="text" id="s_h1color" style="width:76px">
+          <span style="width:32px;font-size:12px;color:var(--ink-2)">H2</span>
+          <input type="text" id="s_h2size" style="width:52px"><input type="text" id="s_h2color" style="width:76px">
+        </div>
+        <div class="formrow"><span style="width:32px;font-size:12px;color:var(--ink-2)">H3</span>
+          <input type="text" id="s_h3size" style="width:52px"><input type="text" id="s_h3color" style="width:76px">
+        </div>
+        <div class="formrow"><input type="text" id="s_header" placeholder="Header text ({filename} = document name)"></div>
+        <div class="formrow" style="font-size:12.5px;gap:16px">
+          <label><input type="checkbox" id="s_pagenum"> Page number footer</label>
+          <label><input type="checkbox" id="s_meta"> Metadata table</label>
+          <label><input type="checkbox" id="s_vers"> Version table</label>
+        </div>
+        <div style="font-size:11px;color:var(--ink-3);margin:10px 0 4px">Metadata fields (up to 8, one per line — laid out 2 per row)</div>
+        <textarea id="s_fields" style="min-height:120px"></textarea>
+        <div class="formrow"><span style="flex:1" id="stdmsg" style="font-size:12px"></span>
+          <button class="btn-blue" onclick="saveStandard()">Save standard</button></div>
+      </div>
     </div>
     <div class="col-p" id="pcol" style="display:none">
       <h1 id="ptitle"></h1>
@@ -938,6 +993,37 @@ app.get("/prompts", auth.requireAdmin, (req, res) => {
       loadGroups(true);
     }
     loadGroups();
+
+    // ---- document standard ----
+    async function loadStandard() {
+      const s = await j("/api/standard");
+      $("s_font").value = s.body.font; $("s_bodysize").value = s.body.sizePt; $("s_bodycolor").value = s.body.color;
+      $("s_h1size").value = s.h1.sizePt; $("s_h1color").value = s.h1.color;
+      $("s_h2size").value = s.h2.sizePt; $("s_h2color").value = s.h2.color;
+      $("s_h3size").value = s.h3.sizePt; $("s_h3color").value = s.h3.color;
+      $("s_header").value = s.headerText || "";
+      $("s_pagenum").checked = !!s.footerPageNumber;
+      $("s_meta").checked = !!s.metadataTable;
+      $("s_vers").checked = !!s.versionTable;
+      $("s_fields").value = (s.metadataFields || []).join("\\n");
+    }
+    async function saveStandard() {
+      const cfg = {
+        body: { font: $("s_font").value.trim() || "Calibri", sizePt: +$("s_bodysize").value || 11, color: $("s_bodycolor").value.trim() || "1D1D1F" },
+        h1: { sizePt: +$("s_h1size").value || 16, color: $("s_h1color").value.trim() || "0079C1", bold: true },
+        h2: { sizePt: +$("s_h2size").value || 14, color: $("s_h2color").value.trim() || "0079C1", bold: true },
+        h3: { sizePt: +$("s_h3size").value || 12, color: $("s_h3color").value.trim() || "00629B", bold: true },
+        headerText: $("s_header").value.trim(),
+        footerPageNumber: $("s_pagenum").checked,
+        metadataTable: $("s_meta").checked,
+        versionTable: $("s_vers").checked,
+        metadataFields: $("s_fields").value.split("\\n").map(x => x.trim()).filter(Boolean).slice(0, 8)
+      };
+      await j("/api/standard", { method: "PUT", body: JSON.stringify(cfg) });
+      $("stdmsg").textContent = "Saved.";
+      setTimeout(() => $("stdmsg").textContent = "", 2000);
+    }
+    loadStandard();
   </script>
   </body></html>`);
 });
