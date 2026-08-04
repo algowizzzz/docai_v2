@@ -85,6 +85,18 @@ app.post("/upload", upload.single("file"), (req, res) => {
   res.json({ id, title: req.file.originalname, status: valid ? "ready" : "failed" });
 });
 
+// delete = soft delete: moved to storage/.trash (recoverable), never destroyed
+app.delete("/api/docs/:id", (req, res) => {
+  const id = req.params.id;
+  if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
+  const trash = path.join(STORAGE, ".trash");
+  fs.mkdirSync(trash, { recursive: true });
+  fs.renameSync(docDir(id), path.join(trash, `${id}-${Date.now()}`));
+  console.log(`doc ${id} moved to trash by ${req.user.sub}`);
+  res.json({ ok: true });
+});
+
 // editor reports an unopenable document -> mark failed (shows on the library)
 app.post("/api/docs/:id/error", (req, res) => {
   const id = req.params.id;
@@ -388,6 +400,9 @@ app.get("/", (req, res) => {
         <div class="rmeta">v${d.v} · Updated ${fmtDate(d.mtime)}</div>
       </div>
       ${TAG[d.status] || TAG.ready}
+      <button class="del" title="Delete" onclick="delDoc(event,'${d.id}',this)">
+        <svg viewBox="0 0 16 18" fill="none"><path d="M2 4h12M6 4V2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V4m2.5 0-.7 11.1a1 1 0 0 1-1 .9H5.2a1 1 0 0 1-1-.9L3.5 4M6.5 7.5v5M9.5 7.5v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
       <svg class="chev" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="var(--ink-3)" stroke-width="1.6" stroke-linecap="round"/></svg>
     </a>`).join("");
   res.send(`<!doctype html><html><head><meta charset="utf-8">
@@ -421,6 +436,10 @@ app.get("/", (req, res) => {
     .tag.ok{background:rgba(52,168,83,.12);color:#1e7e34}
     .tag.fail{background:rgba(192,0,0,.1);color:#C00000}
     .tag.prog{background:rgba(0,121,193,.1);color:var(--bmo-blue)}
+    .del{border:0;background:none;color:var(--ink-3);cursor:pointer;padding:6px;border-radius:8px;
+         flex:none;display:flex;align-items:center}
+    .del svg{width:15px;height:17px}
+    .del:hover{color:#C00000;background:rgba(192,0,0,.07)}
     .bar{height:4px;border-radius:2px;background:var(--line);margin-top:8px;overflow:hidden;display:none}
     .bar i{display:block;height:100%;width:0;background:var(--bmo-blue);transition:width .2s}
   </style></head><body>
@@ -481,6 +500,14 @@ app.get("/", (req, res) => {
       document.querySelectorAll(".row").forEach(r =>
         r.style.display = r.dataset.title.includes(q) ? "" : "none");
     });
+    async function delDoc(ev, id, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      const row = btn.closest(".row");
+      const title = row.querySelector(".rtitle").textContent;
+      if (!confirm('Delete "' + title + '"?\\nAll versions move to trash (recoverable by an administrator).')) return;
+      const r = await fetch("/api/docs/" + id, { method: "DELETE" });
+      if (r.ok) row.remove(); else alert("Delete failed (" + r.status + ")");
+    }
   </script>
   </body></html>`);
 });
@@ -549,6 +576,8 @@ app.get("/doc/:id", (req, res) => {
     #editor{flex:1}
   </style></head><body>
   <div class="topbar">
+    <a href="/"><img class="brandlogo" src="/brand/bmo-logo.png" alt="BMO"></a>
+    <span class="divider"></span>
     <a class="back" href="/"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M7 13L1 7l6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Documents</a>
     <span class="divider"></span>
     <span class="doctitle">${m.title}</span>
