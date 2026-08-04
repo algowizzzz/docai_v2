@@ -70,7 +70,8 @@ function meta(id) { return JSON.parse(fs.readFileSync(path.join(docDir(id), "met
 // Fallback: Document Server conversion (clean text flow, but tables become
 // positioned text). See TEST-CASES/HANDOFF for the fidelity comparison.
 const { execFile } = require("child_process");
-const PDF2DOCX_PY = path.join(__dirname, "pdfenv", "bin", "python");
+const PDF2DOCX_PY = path.join(__dirname, "pdfenv",
+  process.platform === "win32" ? path.join("Scripts", "python.exe") : path.join("bin", "python"));
 
 function convertPdfViaPdf2docx(id) {
   return new Promise((resolve, reject) => {
@@ -339,10 +340,9 @@ app.post("/api/promptgroups/:id/reorder", auth.requireAdmin, (req, res) => {
 // version's OOXML and reports which cells are (non-white) shaded. Table order
 // matches the plugin's traversal: XML open-tag order (nested inside parent).
 function cellShadingMatrix(id) {
-  const { execFileSync } = require("child_process");
+  const AdmZip = require("adm-zip");
   const file = path.join(docDir(id), `v${latest(id)}.docx`);
-  const xml = execFileSync("unzip", ["-p", file, "word/document.xml"],
-                           { maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
+  const xml = new AdmZip(file).readAsText("word/document.xml");
   const tokens = xml.match(/<w:tbl>|<\/w:tbl>|<w:tr[ >]|<\/w:tr>|<w:tc>|<w:tc [^>]*>|<\/w:tc>|<w:shd [^>]*\/>/g) || [];
   const tables = [];        // output, in open-tag order
   const tableStack = [];    // open tables
