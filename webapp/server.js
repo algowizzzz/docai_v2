@@ -628,19 +628,25 @@ app.get("/", (req, res) => {
       const prog = document.getElementById("prog"), bar = document.getElementById("bar"),
             fill = document.getElementById("barfill");
       prog.style.display = "block"; bar.style.display = "block";
-      let ok = 0, fail = 0, lastId = null;
+      let ok = 0, fail = 0, lastId = null, lastErr = null;
       for (let i = 0; i < files.length; i++) {
         prog.textContent = "Uploading " + (i + 1) + " of " + files.length + " — " + files[i].name;
         fill.style.width = Math.round(100 * i / files.length) + "%";
         try {
           const fd = new FormData(); fd.append("file", files[i]);
           const r = await fetch("/upload", { method: "POST", body: fd });
+          if (r.status === 401) {
+            prog.textContent = "Session expired — signing you back in…";
+            setTimeout(() => window.location = "/", 1200);
+            return;
+          }
           const j = await r.json();
-          if (r.ok && j.status === "ready") { ok++; lastId = j.id; } else fail++;
-        } catch (e) { fail++; }
+          if (r.ok && j.status === "ready") { ok++; lastId = j.id; }
+          else { fail++; lastErr = j.error || ("upload " + (j.status || r.status)); }
+        } catch (e) { fail++; lastErr = e.message; }
       }
       fill.style.width = "100%";
-      prog.textContent = ok + " uploaded" + (fail ? ", " + fail + " failed" : "");
+      prog.textContent = ok + " uploaded" + (fail ? ", " + fail + " failed" + (lastErr ? " (" + lastErr + ")" : "") : "");
       if (files.length === 1 && ok === 1) { window.location = "/doc/" + lastId; }
       else setTimeout(() => window.location.reload(), 600);
     }
