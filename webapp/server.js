@@ -334,6 +334,53 @@ app.post("/api/promptgroups/:id/reorder", auth.requireAdmin, (req, res) => {
   store.prompts.reorder(+req.params.id, req.body.ids || []); res.json({ ok: true });
 });
 
+// ---------- table shading matrix for the Standardize plugin ----------
+// The plugin API has no shading getters, so the server reads the latest saved
+// version's OOXML and reports which cells are (non-white) shaded. Table order
+// matches the plugin's traversal: XML open-tag order (nested inside parent).
+function cellShadingMatrix(id) {
+  const { execFileSync } = require("child_process");
+  const file = path.join(docDir(id), `v${latest(id)}.docx`);
+  const xml = execFileSync("unzip", ["-p", file, "word/document.xml"],
+                           { maxBuffer: 64 * 1024 * 1024 }).toString("utf8");
+  const tokens = xml.match(/<w:tbl>|<\/w:tbl>|<w:tr[ >]|<\/w:tr>|<w:tc>|<w:tc [^>]*>|<\/w:tc>|<w:shd [^>]*\/>/g) || [];
+  const tables = [];        // output, in open-tag order
+  const tableStack = [];    // open tables
+  const cellStack = [];     // open cells
+  for (const t of tokens) {
+    if (t === "<w:tbl>") {
+      const tb = { rows: [] };
+      tables.push(tb); tableStack.push(tb);
+    } else if (t === "</w:tbl>") {
+      tableStack.pop();
+    } else if (t.startsWith("<w:tr")) {
+      const tb = tableStack[tableStack.length - 1];
+      if (tb) tb.rows.push([]);
+    } else if (t.startsWith("<w:tc")) {
+      const tb = tableStack[tableStack.length - 1];
+      const row = tb && tb.rows[tb.rows.length - 1];
+      const cell = { shaded: false };
+      if (row) row.push(cell);
+      cellStack.push(cell);
+    } else if (t === "</w:tc>") {
+      cellStack.pop();
+    } else if (t.startsWith("<w:shd")) {
+      const m = t.match(/w:fill="([0-9A-Fa-f]{6})"/);
+      const cell = cellStack[cellStack.length - 1];
+      if (cell && m && m[1].toUpperCase() !== "FFFFFF") cell.shaded = true;
+    }
+  }
+  return tables.map(tb => tb.rows.map(row => row.map(c => c.shaded)));
+}
+
+app.get("/api/docs/:id/shading", (req, res) => {
+  const id = req.params.id;
+  if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
+  try { res.json({ tables: cellShadingMatrix(id) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ---------- document standard (governed from /prompts, applied by the Standardize plugin) ----------
 app.get("/api/standard", (req, res) =>
   res.json(store.settings.get("standard", store.DEFAULT_STANDARD)));

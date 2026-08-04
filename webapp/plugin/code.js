@@ -307,7 +307,14 @@
 
   document.getElementById("stdapply").onclick = function () {
     Asc.scope.docname = (window.Asc.plugin.info && window.Asc.plugin.info.documentTitle) || "Document";
-    stdRun(this, "Applying standard…", function () { return Promise.resolve(); }, function () {
+    var docId = stdDocId();
+    stdRun(this, "Applying standard…", function () {
+      // cell shading matrix comes from the server (plugin API has no getters)
+      return (docId
+        ? fetch("/api/docs/" + docId + "/shading").then(function (r) { return r.ok ? r.json() : { tables: null }; }).catch(function () { return { tables: null }; })
+        : Promise.resolve({ tables: null })
+      ).then(function (j) { Asc.scope.shading = j.tables || null; });
+    }, function () {
       var log = [];
       function hex(c) { return [parseInt(c.slice(0,2),16), parseInt(c.slice(2,4),16), parseInt(c.slice(4,6),16)]; }
       try {
@@ -359,7 +366,8 @@
         var forced = 0;
         function forceRange(rg, font, sizePt, colorHex, bold) {
           try { rg.SetFontFamily(font); } catch (e) {}
-          if (sizePt) { try { rg.SetFontSize(sizePt * 2); } catch (e) {} }
+          // NB: ApiRange.SetFontSize takes POINTS (unlike style TextPr, half-points)
+          if (sizePt) { try { rg.SetFontSize(sizePt); } catch (e) {} }
           if (colorHex) {
             var c = hex(colorHex);
             try { rg.SetColor(c[0], c[1], c[2]); }
@@ -403,23 +411,51 @@
             }
           }
         }
-        function walk(el) {
+        // shading matrix computed server-side from the saved OOXML;
+        // tables are visited in the same order (XML open-tag order)
+        var shadingTables = Asc.scope.shading || null;
+        var tableCounter = 0;
+        var shadedCells = 0;
+        function walk(el, darkText) {
           try {
             var t = el.GetClassType ? el.GetClassType() : "";
-            if (t === "paragraph") forcePara(el);
+            if (t === "paragraph") {
+              forcePara(el);
+              if (darkText) {
+                // cell was re-shaded to light blue: old white-on-dark text
+                // must become dark to stay readable
+                try {
+                  var rgd = el.GetRange();
+                  var cd = hex(cfg.body.color);
+                  try { rgd.SetColor(cd[0], cd[1], cd[2]); }
+                  catch (e) { try { rgd.SetColor(Api.CreateColorFromRGB(cd[0], cd[1], cd[2])); } catch (e2) {} }
+                } catch (e) {}
+              }
+            }
             else if (t === "table") {
+              var shades = shadingTables ? shadingTables[tableCounter] : null;
+              tableCounter++;
+              var headerRow = shades && shades[0] && shades[0].some(function (x) { return x; });
               for (var r2 = 0; r2 < el.GetRowsCount(); r2++) {
                 var row = el.GetRow(r2);
                 for (var c2 = 0; c2 < row.GetCellsCount(); c2++) {
-                  var content = row.GetCell(c2).GetContent();
-                  for (var k = 0; k < content.GetElementsCount(); k++) walk(content.GetElement(k));
+                  var cell = row.GetCell(c2);
+                  var wasShaded = shades && shades[r2] && shades[r2][c2];
+                  // non-white cells follow the BMO light blue; a shaded header
+                  // row becomes uniformly light blue
+                  var reshaded = false;
+                  if (wasShaded || (headerRow && r2 === 0)) {
+                    try { cell.SetBackgroundColor(232, 240, 247, false); shadedCells++; reshaded = true; } catch (e) {}
+                  }
+                  var content = cell.GetContent();
+                  for (var k = 0; k < content.GetElementsCount(); k++) walk(content.GetElement(k), reshaded);
                 }
               }
             }
           } catch (e) {}
         }
         for (var i2 = 0; i2 < doc.GetElementsCount(); i2++) walk(doc.GetElement(i2));
-        log.push("enforced(" + forced + " headings)");
+        log.push("enforced(" + forced + " headings, " + shadedCells + " shaded cells)");
 
         return "OK: " + log.join(", ");
       } catch (e) { return "ERROR: " + e.message; }
