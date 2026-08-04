@@ -1,0 +1,35 @@
+# Production-shaped deployment: `docker compose up -d`
+# Local pilot currently runs the app with host node + the existing onlyoffice-pilot
+# container; this file is the on-prem story (Linux server with Docker Engine).
+services:
+  documentserver:
+    image: onlyoffice/documentserver:latest
+    ports:
+      - "8090:80"
+    environment:
+      # Enable and set a real secret in production; app must sign configs with it.
+      - JWT_ENABLED=false
+    volumes:
+      - docdata:/var/www/onlyoffice/Data
+      - doclogs:/var/log/onlyoffice
+      # Corporate fonts (fidelity requirement #1): put .ttf/.otf here
+      - ./fonts:/usr/share/fonts/truetype/custom
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DS_PUBLIC=http://localhost:8090
+      - APP_FOR_DS=http://app:3000
+    volumes:
+      - appstorage:/app/storage
+    depends_on:
+      - documentserver
+    restart: unless-stopped
+
+volumes:
+  docdata:
+  doclogs:
+  appstorage:

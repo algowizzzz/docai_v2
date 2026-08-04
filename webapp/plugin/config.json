@@ -1,0 +1,25 @@
+{
+  "name": "RiskGPT AI Assistant",
+  "nameLocale": {},
+  "guid": "asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}",
+  "version": "1.0.0",
+  "minVersion": "7.2.0",
+  "variations": [
+    {
+      "description": "AI Assistant panel",
+      "url": "index.html",
+      "icons": ["icon.png", "icon@2x.png"],
+      "isViewer": true,
+      "EditorsSupport": ["word"],
+      "isVisual": true,
+      "isModal": false,
+      "isInsideMode": true,
+      "initDataType": "none",
+      "initData": "",
+      "isUpdateOleOnResize": false,
+      "buttons": [],
+      "initOnSelectionChanged": false,
+      "events": []
+    }
+  ]
+}

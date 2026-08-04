@@ -1,0 +1,13 @@
+# runtime & dependencies
+webapp/node_modules/
+webapp/tmp-upload/
+webapp/storage/
+webapp/data/
+# local test corpus & outputs (contain personal/work documents — never push)
+sample-docs/
+previews/
+reports/
+roundtrip/
+work/
+.DS_Store
+*.log
