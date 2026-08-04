@@ -45,6 +45,10 @@
   .md strong{font-weight:700}
   .md hr{border:0;border-top:1px solid var(--line);margin:8px 0}
   .pcactions{margin-bottom:8px;display:flex;justify-content:flex-end}
+  .stdlist{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 12px}
+  .stditem{font-size:12px;padding:7px 0;border-bottom:1px solid var(--line);color:var(--ink2)}
+  .stditem:last-child{border-bottom:0}
+  .stditem b{color:var(--ink);font-weight:600}
   a.ibtn{text-decoration:none;display:inline-block}
   .subseg{margin-top:8px}
   #log,#pcout{flex:1;overflow-y:auto;padding:12px}
@@ -77,6 +81,7 @@
   <div class="tabs">
     <div class="tab active" data-pane="chat">Chat</div>
     <div class="tab" data-pane="pchain">AI Analysis</div>
+    <div class="tab" data-pane="std">Standardize</div>
   </div>
 
   <!-- CHAT -->
@@ -89,6 +94,26 @@
     <div class="foot">
       <textarea id="q" placeholder="Ask a question…"></textarea>
       <button class="send" id="send">Send</button>
+    </div>
+  </div>
+
+  <!-- STANDARDIZE -->
+  <div class="pane" id="pane-std">
+    <div class="label">Document standard</div>
+    <div class="pcwrap">
+      <div class="stdlist">
+        <div class="stditem"><b>Body</b> — Calibri 11pt, dark grey</div>
+        <div class="stditem"><b>Heading 1</b> — 16pt bold, BMO blue</div>
+        <div class="stditem"><b>Heading 2</b> — 14pt bold, BMO blue</div>
+        <div class="stditem"><b>Heading 3</b> — 12pt bold, dark blue</div>
+        <div class="stditem"><b>Header</b> — document file name</div>
+        <div class="stditem"><b>Footer</b> — page number, centred</div>
+      </div>
+      <div class="hint">Applies the standard to the whole document. The previous state stays in version history.</div>
+    </div>
+    <div id="stdout"><div class="sys">Review the standard above, then apply.</div></div>
+    <div class="foot">
+      <button class="send" id="stdapply">Apply standard formatting</button>
     </div>
   </div>
 

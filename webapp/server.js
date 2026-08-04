@@ -65,24 +65,104 @@ function versions(id) {
 function latest(id) { const v = versions(id); return v[v.length - 1]; }
 function meta(id) { return JSON.parse(fs.readFileSync(path.join(docDir(id), "meta.json"))); }
 
-// ---------- upload ----------
-app.post("/upload", upload.single("file"), (req, res) => {
-  if (!req.file || !req.file.originalname.toLowerCase().endsWith(".docx")) {
+// ---------- upload (.docx directly; .pdf converted to .docx) ----------
+// Primary: pdf2docx (reconstructs REAL table objects from ruling lines).
+// Fallback: Document Server conversion (clean text flow, but tables become
+// positioned text). See TEST-CASES/HANDOFF for the fidelity comparison.
+const { execFile } = require("child_process");
+const PDF2DOCX_PY = path.join(__dirname, "pdfenv", "bin", "python");
+
+function convertPdfViaPdf2docx(id) {
+  return new Promise((resolve, reject) => {
+    const pdf = path.join(docDir(id), "original.pdf");
+    const out = path.join(docDir(id), "v1.docx");
+    const script = "import warnings,sys; warnings.filterwarnings('ignore')\n" +
+      "from pdf2docx import Converter\n" +
+      "cv = Converter(sys.argv[1]); cv.convert(sys.argv[2]); cv.close()";
+    execFile(PDF2DOCX_PY, ["-c", script, pdf, out], { timeout: 300000 }, (err) => {
+      if (err) return reject(err);
+      if (!fs.existsSync(out) || fs.statSync(out).size < 1000) return reject(new Error("empty output"));
+      resolve();
+    });
+  });
+}
+
+async function convertPdfToDocx(id) {
+  const payload = {
+    async: false, filetype: "pdf", outputtype: "docx",
+    key: `pdf${id}${Date.now() % 100000}`, title: "upload.pdf",
+    url: `${APP_FOR_DS}/files/${id}/original.pdf`
+  };
+  const r = await fetch(`${DS_PUBLIC}/ConvertService.ashx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(180000)
+  });
+  const j = await r.json();
+  if (j.error !== undefined && j.error !== 0) throw new Error(`conversion error ${j.error}`);
+  const out = await fetch(j.fileUrl, { signal: AbortSignal.timeout(180000) });
+  return Buffer.from(await out.arrayBuffer());
+}
+
+app.post("/upload", upload.single("file"), async (req, res) => {
+  const name = req.file ? req.file.originalname : "";
+  const isDocx = name.toLowerCase().endsWith(".docx");
+  const isPdf = name.toLowerCase().endsWith(".pdf");
+  if (!req.file || (!isDocx && !isPdf)) {
     if (req.file) fs.unlinkSync(req.file.path);
-    return res.status(400).json({ error: "Only .docx files are supported" });
+    return res.status(400).json({ error: "Only .docx and .pdf files are supported" });
   }
   const id = crypto.randomBytes(6).toString("hex");
   const buf = fs.readFileSync(req.file.path);
-  // validity check: zip magic + OOXML main part present in the central directory
-  const valid = buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf.includes("word/document.xml");
   fs.mkdirSync(docDir(id));
-  fs.copyFileSync(req.file.path, path.join(docDir(id), "v1.docx"));
+  const metaBase = { title: name, uploaded: new Date().toISOString(),
+                     owner: { id: req.user.sub, name: req.user.name } };
+  const writeMeta = extra =>
+    fs.writeFileSync(path.join(docDir(id), "meta.json"), JSON.stringify({ ...metaBase, ...extra }));
+
+  if (isDocx) {
+    const valid = buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf.includes("word/document.xml");
+    fs.copyFileSync(req.file.path, path.join(docDir(id), "v1.docx"));
+    fs.unlinkSync(req.file.path);
+    writeMeta({ status: valid ? "ready" : "failed" });
+    return res.json({ id, title: name, status: valid ? "ready" : "failed" });
+  }
+
+  // PDF: keep the original immutably, convert a copy to docx for editing
+  const validPdf = buf.slice(0, 5).toString() === "%PDF-";
+  fs.copyFileSync(req.file.path, path.join(docDir(id), "original.pdf"));
   fs.unlinkSync(req.file.path);
-  fs.writeFileSync(path.join(docDir(id), "meta.json"),
-    JSON.stringify({ title: req.file.originalname, uploaded: new Date().toISOString(),
-                     status: valid ? "ready" : "failed",
-                     owner: { id: req.user.sub, name: req.user.name } }));
-  res.json({ id, title: req.file.originalname, status: valid ? "ready" : "failed" });
+  if (!validPdf) {
+    writeMeta({ status: "failed", converted_from: "pdf" });
+    return res.json({ id, title: name, status: "failed" });
+  }
+  try {
+    writeMeta({ status: "processing", converted_from: "pdf" });
+    let engine = "pdf2docx";
+    try {
+      await convertPdfViaPdf2docx(id);
+    } catch (e1) {
+      console.error(`pdf2docx failed for ${id} (${e1.message}), falling back to Document Server`);
+      engine = "documentserver";
+      const docxBuf = await convertPdfToDocx(id);
+      fs.writeFileSync(path.join(docDir(id), "v1.docx"), docxBuf);
+    }
+    writeMeta({ status: "ready", converted_from: "pdf", convert_engine: engine,
+                title: name.replace(/\.pdf$/i, ".docx") });
+    res.json({ id, title: name, status: "ready" });
+  } catch (e) {
+    console.error(`pdf conversion failed for ${id}:`, e.message);
+    writeMeta({ status: "failed", converted_from: "pdf" });
+    res.json({ id, title: name, status: "failed" });
+  }
+});
+
+// raw uploaded PDF (fetched by Document Server for conversion; also user download)
+app.get("/files/:id/original.pdf", (req, res) => {
+  const f = path.join(docDir(req.params.id), "original.pdf");
+  if (!fs.existsSync(f)) return res.sendStatus(404);
+  res.download(f);
 });
 
 // delete = soft delete: moved to storage/.trash (recoverable), never destroyed
@@ -387,8 +467,10 @@ app.get("/", (req, res) => {
     .map(id => {
       const m = meta(id);
       const v = latest(id);
-      const mtime = fs.statSync(path.join(docDir(id), `v${v}.docx`)).mtime;
-      return { id, title: m.title, v, mtime, status: m.status || "ready" };
+      const mtime = v ? fs.statSync(path.join(docDir(id), `v${v}.docx`)).mtime
+                      : fs.statSync(path.join(docDir(id), "meta.json")).mtime;
+      return { id, title: m.title, v: v || 0, mtime, status: m.status || "ready",
+               fromPdf: m.converted_from === "pdf" };
     })
     .sort((a, b) => b.mtime - a.mtime);
   const TAG = { ready: '<span class="tag ok">Ready</span>', failed: '<span class="tag fail">Failed</span>' };
@@ -397,7 +479,7 @@ app.get("/", (req, res) => {
       <svg class="ficon" viewBox="0 0 20 20" fill="none"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="var(--bmo-blue)" stroke-width="1.4"/><path d="M12 2v4h4" stroke="var(--bmo-blue)" stroke-width="1.4"/></svg>
       <div class="rmain">
         <div class="rtitle">${d.title}</div>
-        <div class="rmeta">v${d.v} · Updated ${fmtDate(d.mtime)}</div>
+        <div class="rmeta">${d.v ? `v${d.v}` : "—"} · Updated ${fmtDate(d.mtime)}${d.fromPdf ? " · converted from PDF" : ""}</div>
       </div>
       ${TAG[d.status] || TAG.ready}
       <button class="del" title="Delete" onclick="delDoc(event,'${d.id}',this)">
@@ -457,12 +539,12 @@ app.get("/", (req, res) => {
       <input class="search" id="search" type="search" placeholder="Search">
     </div>
     <div class="drop" id="drop">
-      <div class="big">Drop a Word document here</div>
-      <div class="hint">or click to choose a .docx file</div>
+      <div class="big">Drop Word or PDF documents here</div>
+      <div class="hint">or click to choose .docx / .pdf files</div>
       <div class="trust">Originals are preserved — every edit becomes a new version.</div>
       <div id="prog"></div>
       <div class="bar" id="bar"><i id="barfill"></i></div>
-      <input id="file" type="file" accept=".docx" multiple hidden>
+      <input id="file" type="file" accept=".docx,.pdf" multiple hidden>
     </div>
     <div class="list" id="list">${rows || '<div class="empty">No documents yet. Drop a Word file above to begin.</div>'}</div>
   </div>
@@ -474,8 +556,8 @@ app.get("/", (req, res) => {
     drop.addEventListener("drop", ev => upload(ev.dataTransfer.files));
     file.addEventListener("change", () => upload(file.files));
     async function upload(fileList) {
-      const files = [...fileList].filter(f => f.name.toLowerCase().endsWith(".docx"));
-      if (!files.length) { alert("Please choose .docx files"); return; }
+      const files = [...fileList].filter(f => /\.(docx|pdf)$/i.test(f.name));
+      if (!files.length) { alert("Please choose .docx or .pdf files"); return; }
       const prog = document.getElementById("prog"), bar = document.getElementById("bar"),
             fill = document.getElementById("barfill");
       prog.style.display = "block"; bar.style.display = "block";
@@ -518,6 +600,7 @@ app.get("/doc/:id", (req, res) => {
   if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
   const m = meta(id);
   const cur = latest(id);
+  if (!cur) return res.status(409).send("<p style='font-family:sans-serif'>This document failed to convert and has no editable version. <a href='/'>Back</a></p>");
   // ?v=N opens an older version read-only
   const ver = req.query.v && versions(id).includes(+req.query.v) ? +req.query.v : cur;
   const readonly = ver !== cur;
