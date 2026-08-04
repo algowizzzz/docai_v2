@@ -34,7 +34,15 @@ db.exec(`
     output_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS chat_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT, user_name TEXT,
+    scope TEXT, context_words INTEGER,
+    question TEXT, answer TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+try { db.exec("ALTER TABLE runs ADD COLUMN user_id TEXT"); } catch (e) { /* exists */ }
 
 // ---------- groups ----------
 const groups = {
@@ -78,10 +86,17 @@ const prompts = {
 
 // ---------- runs ----------
 const runs = {
-  save: (groupId, groupName, docWords, output) =>
-    db.prepare("INSERT INTO runs (group_id, group_name, doc_words, output_json) VALUES (?,?,?,?)")
-      .run(groupId, groupName, docWords, JSON.stringify(output)),
+  save: (groupId, groupName, docWords, output, userId) =>
+    db.prepare("INSERT INTO runs (group_id, group_name, doc_words, output_json, user_id) VALUES (?,?,?,?,?)")
+      .run(groupId, groupName, docWords, JSON.stringify(output), userId || null),
   get: id => db.prepare("SELECT * FROM runs WHERE id=?").get(id)
+};
+
+// ---------- chat audit log (Q&A + scope; full document context is NOT stored) ----------
+const chatLog = {
+  add: (u, scope, words, q, a) =>
+    db.prepare("INSERT INTO chat_log (user_id, user_name, scope, context_words, question, answer) VALUES (?,?,?,?,?,?)")
+      .run(u?.sub || null, u?.name || null, scope, words, q, a)
 };
 
 // ---------- seed a demo group on first boot ----------
@@ -94,4 +109,4 @@ if (groups.list().length === 0) {
   prompts.add(gid, "summary", "Executive summary", "Write an executive summary of the findings below for a risk committee. Be concise.");
 }
 
-module.exports = { db, groups, prompts, runs };
+module.exports = { db, groups, prompts, runs, chatLog };

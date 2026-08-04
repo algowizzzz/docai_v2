@@ -22,8 +22,26 @@ const APP_FOR_DS = process.env.APP_FOR_DS || `http://host.docker.internal:${proc
 const STORAGE = path.join(__dirname, "storage");
 fs.mkdirSync(STORAGE, { recursive: true });
 
+const auth = require("./auth");
+
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+
+// ---------- SSO from the agentic platform (see AUTH-INTEGRATION.md) ----------
+app.get("/sso", async (req, res) => {
+  try {
+    const claims = await auth.exchangeCode(String(req.query.code || ""));
+    if (!claims.sub || !claims.role) throw new Error("incomplete claims");
+    auth.setSessionCookie(res, claims);
+    res.redirect("/");
+  } catch (e) {
+    res.status(401).send(`<p style="font-family:sans-serif">Sign-in failed (${e.message}). <a href="${auth.PLATFORM_LAUNCH_URL}">Back to platform</a></p>`);
+  }
+});
+app.get("/healthz", (req, res) => res.json({ ok: true }));
+
+// every route below requires a session (Document Server paths excepted inside)
+app.use(auth.requireAuth);
 // Document Server's editor frame (different origin) fetches the plugin files
 app.use("/plugin", (req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
@@ -57,7 +75,8 @@ app.post("/upload", upload.single("file"), (req, res) => {
   fs.copyFileSync(req.file.path, path.join(docDir(id), "v1.docx"));
   fs.unlinkSync(req.file.path);
   fs.writeFileSync(path.join(docDir(id), "meta.json"),
-    JSON.stringify({ title: req.file.originalname, uploaded: new Date().toISOString() }));
+    JSON.stringify({ title: req.file.originalname, uploaded: new Date().toISOString(),
+                     owner: { id: req.user.sub, name: req.user.name } }));
   res.redirect(`/doc/${id}`);
 });
 
@@ -96,17 +115,38 @@ app.post("/callback/:id", (req, res) => {
  * handler body with a server-side fetch() to the real worker; keep the shapes.
  */
 
-// 1. Document chat worker: query + doc context (full doc or highlighted selection)
+// 1. Document chat worker: query + doc context (full doc or highlighted selection).
+// If the user's worker has a kb_chat_url (per-worker platform config), proxy
+// there; otherwise use the raw LLM. Q&A goes to the chat audit log either way.
 app.post("/api/worker/chat", async (req, res) => {
   const { question, context, scope } = req.body || {}; // scope: "selection" | "document"
-  const answer = await callLLM({
-    system: "You are RiskGPT, an assistant for Bank of Montreal risk & governance staff. " +
-            "Answer the user's question using the provided document " +
-            (scope === "selection" ? "excerpt (the user's highlighted selection)." : "text.") +
-            " Be concise and precise; quote the document where relevant.",
-    input: `DOCUMENT ${scope === "selection" ? "EXCERPT" : "TEXT"}:\n${context || "(none)"}\n\nQUESTION: ${question || ""}`,
-    reasoning: "medium"
-  });
+  const words = context && context.trim() ? context.trim().split(/\s+/).length : 0;
+  let answer;
+  const cfg = await auth.getWorkerConfig(req.user.worker_id);
+  if (cfg.kb_chat_url) {
+    try {
+      const r = await fetch(cfg.kb_chat_url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.PLATFORM_SERVICE_TOKEN}` },
+        body: JSON.stringify({ question, context, scope, user_id: req.user.sub, worker_id: req.user.worker_id }),
+        signal: AbortSignal.timeout(120000)
+      });
+      if (!r.ok) throw new Error(`KB endpoint ${r.status}`);
+      answer = (await r.json()).answer;
+    } catch (e) {
+      answer = `[KB worker error: ${e.message}]`;
+    }
+  } else {
+    answer = await callLLM({
+      system: "You are RiskGPT, an assistant for Bank of Montreal risk & governance staff. " +
+              "Answer the user's question using the provided document " +
+              (scope === "selection" ? "excerpt (the user's highlighted selection)." : "text.") +
+              " Be concise and precise; quote the document where relevant.",
+      input: `DOCUMENT ${scope === "selection" ? "EXCERPT" : "TEXT"}:\n${context || "(none)"}\n\nQUESTION: ${question || ""}`,
+      reasoning: "medium"
+    });
+  }
+  store.chatLog.add(req.user, scope, words, question || "", answer || "");
   res.json({ answer });
 });
 
@@ -161,27 +201,27 @@ async function callLLM({ system, input, reasoning = "medium" }) {
 const store = require("./db");
 
 app.get("/api/promptgroups", (req, res) => res.json(store.groups.list()));
-app.post("/api/promptgroups", (req, res) => {
+app.post("/api/promptgroups", auth.requireAdmin, (req, res) => {
   try { store.groups.create((req.body.name || "").trim()); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-app.put("/api/promptgroups/:id", (req, res) => {
+app.put("/api/promptgroups/:id", auth.requireAdmin, (req, res) => {
   store.groups.rename(+req.params.id, (req.body.name || "").trim()); res.json({ ok: true });
 });
-app.delete("/api/promptgroups/:id", (req, res) => {
+app.delete("/api/promptgroups/:id", auth.requireAdmin, (req, res) => {
   store.groups.remove(+req.params.id); res.json({ ok: true });
 });
 app.get("/api/promptgroups/:id/prompts", (req, res) => res.json(store.prompts.forGroup(+req.params.id)));
-app.post("/api/promptgroups/:id/prompts", (req, res) => {
+app.post("/api/promptgroups/:id/prompts", auth.requireAdmin, (req, res) => {
   const { type, title, text } = req.body || {};
   try { store.prompts.add(+req.params.id, type === "summary" ? "summary" : "step", title, text); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-app.put("/api/prompts/:id", (req, res) => {
+app.put("/api/prompts/:id", auth.requireAdmin, (req, res) => {
   store.prompts.update(+req.params.id, req.body.title, req.body.text); res.json({ ok: true });
 });
-app.delete("/api/prompts/:id", (req, res) => { store.prompts.remove(+req.params.id); res.json({ ok: true }); });
-app.post("/api/promptgroups/:id/reorder", (req, res) => {
+app.delete("/api/prompts/:id", auth.requireAdmin, (req, res) => { store.prompts.remove(+req.params.id); res.json({ ok: true }); });
+app.post("/api/promptgroups/:id/reorder", auth.requireAdmin, (req, res) => {
   store.prompts.reorder(+req.params.id, req.body.ids || []); res.json({ ok: true });
 });
 
@@ -211,7 +251,7 @@ app.post("/api/worker/promptchain", async (req, res) => {
     };
   }
   const output = { group: group.name, summary, steps: stepResults, ranAt: new Date().toISOString() };
-  const saved = store.runs.save(group.id, group.name, docWords, output);
+  const saved = store.runs.save(group.id, group.name, docWords, output, req.user.sub);
   res.json({ runId: Number(saved.lastInsertRowid), ...output });
 });
 
@@ -307,9 +347,16 @@ function fmtDate(d) {
 }
 
 // ---------- pages ----------
+function canAccessDoc(user, id) {
+  const owner = meta(id).owner;
+  if (auth.isAdmin(user)) return true;
+  return owner && owner.id === user.sub; // legacy ownerless docs: admins only
+}
+
 app.get("/", (req, res) => {
   const docs = fs.readdirSync(STORAGE)
     .filter(d => fs.existsSync(path.join(STORAGE, d, "meta.json")))
+    .filter(d => canAccessDoc(req.user, d))
     .map(id => {
       const v = latest(id);
       const mtime = fs.statSync(path.join(docDir(id), `v${v}.docx`)).mtime;
@@ -357,7 +404,8 @@ app.get("/", (req, res) => {
     <img class="brandlogo" src="/brand/bmo-logo.png" alt="BMO"><span class="divider"></span>
     <span class="appname">RiskGPT</span>
     <span class="spacer"></span>
-    <a class="btn btn-quiet" href="/prompts">AI Analysis</a>
+    <span class="appname" style="opacity:.8">${req.user.name}</span>
+    ${auth.isAdmin(req.user) ? '<a class="btn btn-quiet" href="/prompts">AI Analysis</a>' : ""}
   </div>
   <div class="wrap">
     <div class="headrow">
@@ -399,6 +447,7 @@ app.get("/", (req, res) => {
 app.get("/doc/:id", (req, res) => {
   const id = req.params.id;
   if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
   const m = meta(id);
   const cur = latest(id);
   // ?v=N opens an older version read-only
@@ -420,7 +469,7 @@ app.get("/doc/:id", (req, res) => {
       mode: readonly ? "view" : "edit",
       callbackUrl: `${APP_FOR_DS}/callback/${id}`,
       lang: "en",
-      user: { id: "pilot-user", name: "Pilot User" },
+      user: { id: req.user.sub, name: req.user.name },
       customization: {
         autosave: true,
         forcesave: true,
@@ -531,7 +580,7 @@ app.get("/doc/:id", (req, res) => {
 });
 
 // ---------- prompts admin page ----------
-app.get("/prompts", (req, res) => {
+app.get("/prompts", auth.requireAdmin, (req, res) => {
   res.send(`<!doctype html><html><head><meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Analysis — BMO RiskGPT</title><style>${BRAND_CSS}
@@ -709,6 +758,7 @@ app.get("/prompts", (req, res) => {
 app.get("/download/:id", (req, res) => {
   const id = req.params.id;
   if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
   const ver = req.query.v && versions(id).includes(+req.query.v) ? +req.query.v : latest(id);
   const m = meta(id);
   const name = ver === latest(id) ? m.title : m.title.replace(/\.docx$/i, ` (v${ver}).docx`);
@@ -719,6 +769,7 @@ app.get("/download/:id", (req, res) => {
 app.get("/api/versions/:id", (req, res) => {
   const id = req.params.id;
   if (!fs.existsSync(docDir(id))) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
   const cur = latest(id);
   res.json(versions(id).map(v => ({
     v,
@@ -732,6 +783,7 @@ app.get("/api/versions/:id", (req, res) => {
 app.post("/restore/:id/:ver", (req, res) => {
   const id = req.params.id, ver = +req.params.ver;
   if (!fs.existsSync(docDir(id)) || !versions(id).includes(ver)) return res.sendStatus(404);
+  if (!canAccessDoc(req.user, id)) return res.sendStatus(403);
   const next = latest(id) + 1;
   fs.copyFileSync(path.join(docDir(id), `v${ver}.docx`), path.join(docDir(id), `v${next}.docx`));
   res.json({ ok: true, newVersion: next });
