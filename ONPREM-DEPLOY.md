@@ -164,11 +164,71 @@ All five pass = deployed.
 
 ## If the server is Linux instead
 
-Two good options: (a) **Docker Engine** (free, no Docker Desktop licensing) —
-`webapp/docker-compose.yml` runs Document Server + app; mirror the
-`onlyoffice/documentserver` image through an approved registry or
-`docker save`/`load` via the same GitHub-release trick. (b) **Native deb**:
-`apt install onlyoffice-documentserver` needs an internal apt mirror
-(Artifactory usually proxies Ubuntu repos even when npm is locked down —
-ask). App side is identical (Node + node_modules.zip + systemd units instead
-of Scheduled Tasks).
+Important difference from Windows: **the Windows installer bundles PostgreSQL
+and RabbitMQ, the Linux package does not.** On Linux you install them first,
+create the database by hand, then install Document Server.
+
+### Option A — Docker Engine (simplest; free, no Docker Desktop licence)
+
+`webapp/docker-compose.yml` runs Document Server + app, with Postgres and
+RabbitMQ already inside the Document Server image — nothing to configure.
+If Docker Hub is blocked, move the image in with the same GitHub-release
+trick: on a machine with access run
+`docker pull onlyoffice/documentserver && docker save onlyoffice/documentserver | gzip > ds-image.tgz`,
+upload it to the `deps` release, then on the server
+`gunzip -c ds-image.tgz | docker load`.
+
+### Option B — native package (Ubuntu/Debian)
+
+    # 1. PostgreSQL + database
+    sudo apt update && sudo apt install -y postgresql
+    sudo -i -u postgres psql -c "CREATE DATABASE onlyoffice;"
+    sudo -i -u postgres psql -c "CREATE USER onlyoffice WITH password 'onlyoffice';"
+    sudo -i -u postgres psql -c "GRANT ALL privileges ON DATABASE onlyoffice TO onlyoffice;"
+
+    # 2. RabbitMQ (pulls Erlang automatically)
+    sudo apt install -y rabbitmq-server
+
+    # 3. Document Server repo + install
+    sudo apt install -y gnupg2
+    curl -fsSL https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE | sudo gpg --dearmor -o /usr/share/keyrings/onlyoffice.gpg
+    echo "deb [signed-by=/usr/share/keyrings/onlyoffice.gpg] https://download.onlyoffice.com/repo/debian squeeze main" | sudo tee /etc/apt/sources.list.d/onlyoffice.list
+    sudo apt update && sudo apt install -y onlyoffice-documentserver
+
+    # CHECK
+    curl -s http://localhost/healthcheck     # -> true
+
+⚠ Step 3 needs `download.onlyoffice.com` reachable. If the proxy blocks it:
+ask whether Artifactory proxies the ONLYOFFICE apt repo (banks often proxy
+Debian repos even when npm is locked down), or mirror the single
+`onlyoffice-documentserver_*.deb` to the `deps` release and
+`sudo apt install ./onlyoffice-documentserver_*.deb`.
+
+Config file on Linux is `/etc/onlyoffice/documentserver/local.json` (same JWT
++ request-filtering block as Phase 3); restart with
+`sudo supervisorctl restart all`.
+
+### App side (both options)
+
+Identical to Windows: Node + `node_modules.zip`, same env vars. Use systemd
+units instead of Scheduled Tasks:
+
+    sudo tee /etc/systemd/system/riskgpt.service >/dev/null <<'EOF2'
+    [Unit]
+    Description=RiskGPT app
+    After=network.target
+    [Service]
+    WorkingDirectory=/opt/riskgpt/webapp
+    Environment=DS_PUBLIC=http://SERVERNAME:80
+    Environment=APP_FOR_DS=http://SERVERNAME:3001
+    Environment=SESSION_SECRET=YOUR-SESSION_SECRET
+    Environment=PLATFORM_LAUNCH_URL=http://SERVERNAME:3999/?app=riskgpt
+    ExecStart=/usr/bin/node server.js
+    Restart=always
+    [Install]
+    WantedBy=multi-user.target
+    EOF2
+    sudo systemctl enable --now riskgpt
+
+(and a matching `riskgpt-mock.service` running `node mock-platform/server.js`
+with `APP_SSO_URL=http://SERVERNAME:3001/sso`).
