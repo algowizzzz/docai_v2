@@ -83,9 +83,15 @@ CHECK the SHA-256 matches the release notes:
 
 ## Phase 2 — install Document Server
 
-**Step 2.1** — run the downloaded `.exe` (requires local admin; if a UAC
-prompt cannot be approved, stop and tell the user — see NO-DOCKER.md decision
-tree for the remote-Document-Server alternative). Accept defaults. If the
+**Step 2.1** — run the downloaded `.exe` (requires local admin).
+
+⚠ **IF YOU DO NOT HAVE ADMIN / UAC CANNOT BE APPROVED: STOP HERE and read
+NO-ADMIN.md.** Document Server CANNOT be made portable (its installer payload
+is a proprietary archive; verified — do not spend time trying to extract it,
+and note that portable Erlang/RabbitMQ do NOT substitute for it). NO-ADMIN.md
+gives the two working paths: point the app at a Document Server running on
+another machine that has admin, or run the app in degraded mode without the
+editor. Report to the user which path you are taking. Accept defaults. If the
 installer asks for a port and Step 0.2 found port 80 busy, enter **8090**.
 
 **Step 2.2** — wait ~2 minutes after the installer finishes, then:
