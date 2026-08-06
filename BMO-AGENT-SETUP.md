@@ -137,9 +137,9 @@ and extract it to `C:\riskgpt`. CHECK: the file
 CHECK: ends with "added N packages" and NO line containing `ERR!`.
 
 **Step 3.2-OFFLINE (use this if npm install fails with network/Artifactory
-errors):** download `node_modules.zip` from the repo's `deps` release
+errors):** download `npm-app-modules.zip` from the repo's `deps` release
 (https://github.com/algowizzzz/docai_v2/releases/tag/deps), verify its SHA-256
-against the release notes with `certutil -hashfile node_modules.zip SHA256`,
+against the release notes with `certutil -hashfile npm-app-modules.zip SHA256`,
 then extract it so that the folder `C:\riskgpt\webapp\node_modules\express`
 exists (the zip contains a single `node_modules` folder — extract INTO
 `C:\riskgpt\webapp`). CHECK:
@@ -156,9 +156,10 @@ exists (the zip contains a single `node_modules` folder — extract INTO
 
 CHECK: `pdfenv\Scripts\python -c "import pdf2docx; print('ok')"` prints `ok`.
 
-**Step 3.3-OFFLINE (use if pip fails with network errors):** download
-`python-wheels-win64.zip` from the `deps` release, verify SHA-256, extract to
-`C:\riskgpt\wheels`, then:
+**Step 3.3-OFFLINE (use if pip fails with network errors):** download EVERY
+asset ending in `.whl` from the `deps` release into `C:\riskgpt\wheels`
+(13 files; verify each against `component-checksums.sha256` on the same
+release), then:
 
     pdfenv\Scripts\pip install --no-index --find-links C:\riskgpt\wheels pdf2docx
 
@@ -175,11 +176,18 @@ everything else still works. If the proxy blocks api.deepseek.com, also set
 `HTTPS_PROXY` in the environment, or skip the key.
 
 **Step 3.5 (OPTIONAL — only if you, the agent, want to drive a browser for
-your own verification/testing):** Playwright is already inside
-`node_modules.zip`. Its browsers cannot be downloaded through the proxy, so
-use the pre-bundled ones: download `pw-browsers-win64.zip` from the `deps`
-release, verify SHA-256, extract to `C:\riskgpt\pw-browsers`, and set this
-environment variable in any window where you run Playwright:
+your own verification/testing):** download `npm-playwright-modules.zip` from
+the `deps` release and extract its `node_modules` content INTO
+`C:\riskgpt\webapp\node_modules` (it adds the playwright packages alongside
+the app ones). Browsers cannot be downloaded through the proxy, so use the
+four per-component archives: download `playwright-chromium-win64.zip`,
+`playwright-chromium-headless-shell-win64.zip`, `playwright-ffmpeg-win64.zip`
+and `playwright-winldd-win64.zip` into `C:\riskgpt\pw-downloads`, verify each
+against `component-checksums.sha256`, then assemble:
+
+    scripts\assemble-pw-browsers.bat C:\riskgpt\pw-downloads C:\riskgpt\pw-browsers
+
+and set this environment variable in any window where you run Playwright:
 
     set PLAYWRIGHT_BROWSERS_PATH=C:\riskgpt\pw-browsers
 
