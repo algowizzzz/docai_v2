@@ -95,7 +95,37 @@ Notes for the team:
 
 CHECK: `curl -s http://localhost/healthcheck` → prints `true`.
 
-**Step 4 — continue with the normal deployment guide:** the required
+**Step 4 — PDF conversion packages (offline pip install, Python 3.14):**
+
+The server has no internet, so pip must install from local files. Download
+these **10 wheel files** from the Releases page
+(https://github.com/algowizzzz/docai_v2/releases/tag/deps) into one folder,
+e.g. `/opt/riskgpt/wheels` (verify each against `component-checksums.sha256`
+on the same page):
+
+    fire-0.7.1-py3-none-any.whl
+    fonttools-4.63.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
+    lxml-6.1.1-cp314-cp314-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl
+    numpy-2.5.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+    opencv_python_headless-5.0.0.93-cp37-abi3-manylinux_2_28_x86_64.whl
+    pdf2docx-0.5.13-py3-none-any.whl
+    pymupdf-1.28.2-cp310-abi3-manylinux_2_28_x86_64.whl
+    python_docx-1.2.0-py3-none-any.whl
+    termcolor-3.3.0-py3-none-any.whl
+    typing_extensions-4.16.0-py3-none-any.whl
+
+(Do NOT grab the `win_amd64` wheels listed alongside them — those are for the
+Windows laptop setup.) Then:
+
+    cd /opt/riskgpt/webapp
+    python3 -m venv pdfenv
+    pdfenv/bin/pip install --no-index --find-links /opt/riskgpt/wheels pdf2docx
+
+CHECK: `pdfenv/bin/python -c "import pdf2docx; print('ok')"` → prints `ok`.
+Wheels are built for **Python 3.14 on x86_64** (RHEL 8/9 compatible,
+glibc ≥ 2.28). A different server Python needs a different wheel set — ask.
+
+**Step 5 — continue with the normal deployment guide:** the required
 `local.json` edits (JWT secrets + private-IP allowance), systemd units for the
 app, firewall and fonts are all in [ONPREM-DEPLOY.md](../ONPREM-DEPLOY.md)
 (Linux section) and [HAPPY-PATH.md](../HAPPY-PATH.md).
