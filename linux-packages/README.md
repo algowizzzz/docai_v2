@@ -46,7 +46,27 @@ server with no internet access for these components.
 - **Erlang**: the rpms are signed by the same RabbitMQ key — after importing
   it: `rpm --checksig erlang-*.rpm`.
 
-## Install (run on the server, in this order)
+## The fast way: run the installer
+
+`install.sh` does everything below, in order, with a check after each step.
+Run it from inside the unzipped `riskgpt-linux-packages` folder:
+
+    sudo ./install.sh --check                          # verifies prerequisites, installs NOTHING
+    sudo ./install.sh --hostname riskgpt.bmo.internal  # the real install
+
+Run `--check` **first**. It lists anything missing from the internal RHEL
+mirror so the server team can fix it in one pass instead of discovering the
+gaps one at a time mid-install. The installer is safe to re-run — every step
+is skipped if it is already done — and it never reaches the internet.
+
+It ends with the URLs to test and a short list of the four things it
+deliberately does NOT automate (corporate fonts, editor logo, TLS proxy, real
+SSO).
+
+The manual steps below are the same work, for anyone who prefers to do it by
+hand or needs to debug a failed step.
+
+## Install by hand (run on the server, in this order)
 
 **Step 0 — which Erlang?** Check the OS major version:
 
