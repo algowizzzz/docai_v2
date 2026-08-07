@@ -14,7 +14,7 @@ Stream, x86_64). Erlang is included because RabbitMQ requires it.
 | `rabbitmq-server-3.13.7-1.el8.noarch.rpm` | RabbitMQ 3.13.7 (noarch — works on RHEL 8 **and** 9) | 18 MB | github.com/rabbitmq/rabbitmq-server, release v3.13.7 |
 | `rabbitmq-server-3.13.7-1.el8.noarch.rpm.asc` | RabbitMQ team's GPG signature for the rpm above | 1 KB | same release |
 | `msttcore-fonts-installer-2.6-1.noarch.rpm` | Microsoft core fonts installer — a hard rpm dependency of Document Server that is also usually absent from corporate repos | 30 KB | downloads.sourceforge.net/project/mscorefonts2 |
-| `onlyoffice-documentserver-9.4.0.x86_64.rpm` | ONLYOFFICE Document Server 9.4.0 (AGPL Community Edition) | **674 MB — too big for git (GitHub hard-rejects files over 100 MB), so download it from this repo's Releases page:** https://github.com/algowizzzz/docai_v2/releases/tag/deps | download.onlyoffice.com/repo/centos/main/noarch/ |
+| `onlyoffice-documentserver-9.4.0.x86_64.rpm` | ONLYOFFICE Document Server 9.4.0 (AGPL Community Edition) | **674 MB — too big for git (GitHub hard-rejects files over 100 MB), so download it from this repo's Releases page:** https://github.com/algowizzzz/docai_v2/releases/tag/linux-server | download.onlyoffice.com/repo/centos/main/noarch/ |
 
 SHA-256 for every file is in [`checksums.sha256`](checksums.sha256). Verify after download:
 
@@ -99,8 +99,8 @@ CHECK: `curl -s http://localhost/healthcheck` → prints `true`.
 
 The server has no internet, so pip must install from local files. Download
 these **10 wheel files** from the Releases page
-(https://github.com/algowizzzz/docai_v2/releases/tag/deps) into one folder,
-e.g. `/opt/riskgpt/wheels` (verify each against `component-checksums.sha256`
+(https://github.com/algowizzzz/docai_v2/releases/tag/linux-server) into one folder,
+e.g. `/opt/riskgpt/wheels` (verify each against `linux-server-checksums.sha256`
 on the same page):
 
     fire-0.7.1-py3-none-any.whl
@@ -114,8 +114,7 @@ on the same page):
     termcolor-3.3.0-py3-none-any.whl
     typing_extensions-4.16.0-py3-none-any.whl
 
-(Do NOT grab the `win_amd64` wheels listed alongside them — those are for the
-Windows laptop setup.) Then:
+Then:
 
     cd /opt/riskgpt/webapp
     python3 -m venv pdfenv
