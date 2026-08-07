@@ -18,3 +18,6 @@ node_modules.zip
 pw-browsers-win64.zip
 python-wheels-win64.zip
 offline-bundle.sha256
+
+# too large for git (>100MB GitHub limit) - lives on the deps release instead
+linux-packages/onlyoffice-documentserver-*.rpm
