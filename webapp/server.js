@@ -18,6 +18,10 @@ const PORT = process.env.PORT || 3001;
 const DS_PUBLIC = process.env.DS_PUBLIC || "http://localhost:8090";
 // How *Document Server* (inside Docker) reaches this app:
 const APP_FOR_DS = process.env.APP_FOR_DS || `http://host.docker.internal:${process.env.PORT || 3001}`;
+// How the *browser* reaches this app. The plugin files and the header logo are
+// fetched by the user's browser, so on a server this must be the hostname users
+// type — with localhost the AI panel only ever loads on the server itself.
+const APP_PUBLIC = process.env.APP_PUBLIC || `http://localhost:${PORT}`;
 
 const STORAGE = path.join(__dirname, "storage");
 fs.mkdirSync(STORAGE, { recursive: true });
@@ -237,7 +241,8 @@ app.post("/callback/:id", (req, res) => {
 // If the user's worker has a kb_chat_url (per-worker platform config), proxy
 // there; otherwise use the raw LLM. Q&A goes to the chat audit log either way.
 app.post("/api/worker/chat", async (req, res) => {
-  const { question, context, scope } = req.body || {}; // scope: "selection" | "document"
+  const { question, context } = req.body || {};
+  const scope = req.body?.scope === "selection" ? "selection" : "document";
   const words = context && context.trim() ? context.trim().split(/\s+/).length : 0;
   let answer;
   const cfg = await auth.getWorkerConfig(req.user.worker_id);
@@ -738,15 +743,15 @@ app.get("/doc/:id", (req, res) => {
         about: false,
         feedback: false,
         logo: {
-          image: `http://localhost:${PORT}/brand/riskgpt.png`,
-          imageDark: `http://localhost:${PORT}/brand/riskgpt.png`,
-          url: `http://localhost:${PORT}/`
+          image: `${APP_PUBLIC}/brand/riskgpt.png`,
+          imageDark: `${APP_PUBLIC}/brand/riskgpt.png`,
+          url: `${APP_PUBLIC}/`
         }
       },
       plugins: {
         autostart: ["asc.{8A014E8C-7C3A-4BB5-93D2-4A1D00E4B1C9}"],
         // plugin files are fetched by the BROWSER, so use the browser-facing origin
-        pluginsData: [`http://localhost:${PORT}/plugin/config.json`]
+        pluginsData: [`${APP_PUBLIC}/plugin/config.json`]
       }
     },
     width: "100%",
@@ -1154,5 +1159,15 @@ app.post("/restore/:id/:ver", (req, res) => {
   fs.copyFileSync(path.join(docDir(id), `v${ver}.docx`), path.join(docDir(id), `v${next}.docx`));
   res.json({ ok: true, newVersion: next });
 });
+
+// Express does not catch errors thrown inside async handlers: without this the
+// default Node behaviour is to exit, so one malformed request (a security
+// scanner, a half-written client) would take the app down for every user.
+app.use((err, req, res, _next) => {
+  console.error("request error:", req.method, req.url, err);
+  if (!res.headersSent) res.status(500).json({ error: "internal error" });
+});
+process.on("unhandledRejection", (err) => console.error("unhandledRejection:", err));
+process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
 
 app.listen(PORT, () => console.log(`DocGov pilot on http://localhost:${PORT}`));

@@ -124,17 +124,22 @@ db.exec(`CREATE TABLE IF NOT EXISTS std_log (
   action TEXT, details TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
+// node:sqlite refuses to bind undefined, and a throw here would kill the whole
+// process — so every audit-log value is coerced before it reaches .run().
+const txt = (v) => (v === undefined || v === null ? null : String(v));
+const num = (v) => (Number.isFinite(v) ? v : 0);
+
 const stdLog = {
   add: (u, docId, action, details) =>
     db.prepare("INSERT INTO std_log (user_id, user_name, doc_id, action, details) VALUES (?,?,?,?,?)")
-      .run(u?.sub || null, u?.name || null, docId || null, action, details || "")
+      .run(txt(u?.sub), txt(u?.name), txt(docId), txt(action) ?? "", txt(details) ?? "")
 };
 
 // ---------- chat audit log (Q&A + scope; full document context is NOT stored) ----------
 const chatLog = {
   add: (u, scope, words, q, a) =>
     db.prepare("INSERT INTO chat_log (user_id, user_name, scope, context_words, question, answer) VALUES (?,?,?,?,?,?)")
-      .run(u?.sub || null, u?.name || null, scope, words, q, a)
+      .run(txt(u?.sub), txt(u?.name), txt(scope) ?? "document", num(words), txt(q) ?? "", txt(a) ?? "")
 };
 
 // ---------- seed a demo group on first boot ----------

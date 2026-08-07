@@ -13,12 +13,20 @@ Stream, x86_64). Erlang is included because RabbitMQ requires it.
 | `erlang-26.2.5.2-1.el9.x86_64.rpm` | Same, built for **RHEL 9** family | 21 MB | same release |
 | `rabbitmq-server-3.13.7-1.el8.noarch.rpm` | RabbitMQ 3.13.7 (noarch — works on RHEL 8 **and** 9) | 18 MB | github.com/rabbitmq/rabbitmq-server, release v3.13.7 |
 | `rabbitmq-server-3.13.7-1.el8.noarch.rpm.asc` | RabbitMQ team's GPG signature for the rpm above | 1 KB | same release |
-| `msttcore-fonts-installer-2.6-1.noarch.rpm` | Microsoft core fonts installer — a hard rpm dependency of Document Server that is also usually absent from corporate repos | 30 KB | downloads.sourceforge.net/project/mscorefonts2 |
+| `msttcore-fonts-installer-2.6-1.noarch.rpm` | Microsoft core fonts installer. **Optional — skip it on an offline server**; see step 3 for why | 30 KB | downloads.sourceforge.net/project/mscorefonts2 |
 | `onlyoffice-documentserver-9.4.0.x86_64.rpm` | ONLYOFFICE Document Server 9.4.0 (AGPL Community Edition) | **674 MB — too big for git (GitHub hard-rejects files over 100 MB), so download it from this repo's Releases page:** https://github.com/algowizzzz/docai_v2/releases/tag/linux-server | download.onlyoffice.com/repo/centos/main/noarch/ |
 
-SHA-256 for every file is in [`checksums.sha256`](checksums.sha256). Verify after download:
+SHA-256 for the files **in this folder** is in
+[`checksums.sha256`](checksums.sha256) — run it from inside `linux-packages/`:
 
-    sha256sum -c checksums.sha256
+    cd linux-packages && sha256sum -c checksums.sha256
+
+The files downloaded from the Releases page have their own
+`linux-server-checksums.sha256` on that page; run that one from the folder you
+downloaded them into.
+
+Every step in this file was rehearsed end-to-end on a clean AlmaLinux 9.8
+server with no internet access for these components.
 
 ## How the security team can verify authenticity
 
@@ -55,47 +63,87 @@ RHEL/Rocky/Alma **8**.x → use the `el8` Erlang rpm. **9**.x → use `el9`.
 
 CHECK: `sudo rabbitmqctl status` prints a status report (not an error).
 
-**Step 2 — PostgreSQL** (Document Server needs it; it IS in the standard RHEL
-AppStream repo, so the team should have it):
+**Step 2 — PostgreSQL.** Order matters: PostgreSQL 13 (the RHEL 9 default)
+stores passwords as `md5` unless told otherwise, and Document Server then
+cannot log in. Set the encryption **before** creating the user:
 
-    sudo dnf install postgresql-server postgresql
+    sudo dnf install -y postgresql-server postgresql
     sudo postgresql-setup --initdb
     sudo systemctl enable --now postgresql
-    sudo -i -u postgres psql -c "CREATE DATABASE onlyoffice;" -c "CREATE USER onlyoffice WITH password 'onlyoffice';" -c "GRANT ALL privileges ON DATABASE onlyoffice TO onlyoffice;"
+    sudo -u postgres psql -c "ALTER SYSTEM SET password_encryption='scram-sha-256';"
+    sudo systemctl restart postgresql
+    sudo -u postgres psql -c "CREATE DATABASE onlyoffice;" -c "CREATE USER onlyoffice WITH password 'onlyoffice';" -c "GRANT ALL privileges ON DATABASE onlyoffice TO onlyoffice;"
 
-RHEL's default PostgreSQL auth rejects password logins from localhost. Edit
-`/var/lib/pgsql/data/pg_hba.conf` and change the method on the two
-`host … 127.0.0.1/32 …` / `::1/128` lines from `ident` to `scram-sha-256`,
-then `sudo systemctl restart postgresql`.
+Then allow password logins over localhost: in `/var/lib/pgsql/data/pg_hba.conf`
+change `ident` to `scram-sha-256` on the two `host all all 127.0.0.1/32` and
+`::1/128` lines, and restart once more:
+
+    sudo systemctl restart postgresql
+
 CHECK: `PGPASSWORD=onlyoffice psql -h 127.0.0.1 -U onlyoffice -d onlyoffice -c "select 1;"` → prints `1`.
 
-**Step 3 — fonts dependency, then Document Server:**
+(If the user already exists with an md5 password, re-hash it with
+`sudo -u postgres psql -c "ALTER USER onlyoffice PASSWORD 'onlyoffice';"`
+after the `ALTER SYSTEM` + restart — otherwise login fails with
+"password authentication failed".)
 
-    sudo dnf install ./msttcore-fonts-installer-2.6-1.noarch.rpm
-    sudo dnf install ./onlyoffice-documentserver-9.4.0.x86_64.rpm
+**Step 3 — Document Server's real dependencies, then Document Server.**
 
-Notes for the team:
+    sudo dnf install -y --allowerasing nginx xorg-x11-server-Xvfb gtk3 \
+      liberation-mono-fonts liberation-sans-fonts liberation-serif-fonts \
+      logrotate vim-common wget curl ca-certificates alsa-lib atk \
+      libXScrnSaver libXtst libselinux-utils openssl zlib libcurl libstdc++
 
-- The fonts installer downloads font files from SourceForge during install.
-  If the server has no internet, install it with
-  `sudo rpm -ivh --noscripts msttcore-fonts-installer-2.6-1.noarch.rpm`
-  (satisfies the dependency; we load the bank's licensed fonts separately
-  anyway — see ONPREM-DEPLOY.md Phase 8).
-- Document Server's rpm also pulls these from the **standard RHEL/EPEL
-  repos**: `nginx`, `certbot` (EPEL), `xorg-x11-server-Xvfb`, `gtk3`,
-  `liberation-mono-fonts`, `logrotate`, `vim-common`, `wget`. If EPEL is not
-  enabled and `certbot` blocks the install, `sudo dnf install --nobest` won't
-  help — either enable the org's EPEL mirror or install with
-  `sudo rpm -ivh --nodeps` **after** manually installing nginx and Xvfb
-  (certbot itself is only used for public Let's Encrypt certificates, which
-  an internal server doesn't need).
-- If the installer asks for database settings: host `localhost`, database
-  `onlyoffice`, user `onlyoffice`, password `onlyoffice`. If it never asks
-  and the healthcheck below fails, run `sudo documentserver-configure.sh`.
+(`--allowerasing` is needed because `libcurl` replaces `libcurl-minimal`.
+This pulls in ~220 packages in total — all stock RHEL 9, no EPEL.)
+
+    sudo rpm -ivh --nodeps ./onlyoffice-documentserver-9.4.0.x86_64.rpm
+
+**Why `--nodeps`:** the rpm lists two dependencies that cannot be satisfied on
+an offline RHEL 9 box, and neither is actually needed:
+
+- `certbot` — lives in EPEL, and only exists to obtain public Let's Encrypt
+  certificates. An internal server uses the bank's own certificate.
+- `msttcore-fonts-installer` — its own dependencies (`cabextract`,
+  `xorg-x11-font-utils`) are EPEL-only, and the package downloads fonts from
+  SourceForge at install time, which an offline server cannot do. BMO's
+  licensed fonts are copied in separately (ONPREM-DEPLOY.md Phase 8), which is
+  what you want for fidelity anyway. The rpm is included in this folder only
+  for sites that do have EPEL; **skip it otherwise.**
+
+`--nodeps` skips only those two — every real dependency was installed above.
+
+Then point Document Server at the database and RabbitMQ:
+
+    sudo DB_HOST=localhost DB_PORT=5432 DB_TYPE=postgres DB_NAME=onlyoffice \
+      DB_USER=onlyoffice DB_PWD=onlyoffice RABBITMQ_SERVER_URL=amqp://guest:guest@localhost \
+      documentserver-configure.sh
 
 CHECK: `curl -s http://localhost/healthcheck` → prints `true`.
 
-**Step 4 — PDF conversion packages (offline pip install, Python 3.14):**
+⚠ That script prints a generated **JWT secret**. Copy it — the app needs the
+same value (`ds_jwt_secret` in `webapp/.env`) or the editor will refuse to open
+documents. Retrieve it any time with `documentserver-jwt-status.sh`.
+
+**Step 4 — Node.js 22 and the app.** The default `nodejs` stream on RHEL 9 is
+**Node 16, which the app cannot run on** (it uses Node's built-in SQLite).
+Enable stream 22 first:
+
+    sudo dnf module reset nodejs -y && sudo dnf module enable nodejs:22 -y
+    sudo dnf install -y nodejs
+
+CHECK: `node --version` → v22.x or higher.
+
+Put the code in `/opt/riskgpt`, then install its four Node packages. With an
+npm mirror reachable: `cd /opt/riskgpt/webapp && npm install`. **Offline**, use
+the pre-built bundle from the Releases page instead:
+
+    cd /opt/riskgpt/webapp
+    tar xzf /path/to/npm-app-modules-linux.tar.gz
+
+CHECK: `node -e "require('/opt/riskgpt/webapp/node_modules/express'); console.log('ok')"` → `ok`.
+
+**Step 5 — PDF conversion packages (offline pip install, Python 3.14):**
 
 The server has no internet, so pip must install from local files. Download
 these **10 wheel files** from the Releases page
@@ -117,14 +165,18 @@ on the same page):
 Then:
 
     cd /opt/riskgpt/webapp
-    python3 -m venv pdfenv
+    python3.14 -m venv pdfenv
     pdfenv/bin/pip install --no-index --find-links /opt/riskgpt/wheels pdf2docx
 
-CHECK: `pdfenv/bin/python -c "import pdf2docx; print('ok')"` → prints `ok`.
-Wheels are built for **Python 3.14 on x86_64** (RHEL 8/9 compatible,
-glibc ≥ 2.28). A different server Python needs a different wheel set — ask.
+⚠ Use `python3.14`, **not** `python3` — on RHEL 9 `python3` is 3.9 and the
+install fails with "Could not find a version that satisfies numpy".
+Install the interpreter first with `sudo dnf install -y python3.14`.
 
-**Step 5 — continue with the normal deployment guide:** the required
+CHECK: `pdfenv/bin/python -c "import pdf2docx; print('ok')"` → prints `ok`.
+Wheels are built for **Python 3.14 on x86_64** (glibc ≥ 2.28, so RHEL 9).
+A different server Python needs a different wheel set — ask.
+
+**Step 6 — continue with the normal deployment guide:** the required
 `local.json` edits (JWT secrets + private-IP allowance), systemd units for the
 app, firewall and fonts are all in [ONPREM-DEPLOY.md](../ONPREM-DEPLOY.md)
 (Linux section) and [HAPPY-PATH.md](../HAPPY-PATH.md).
