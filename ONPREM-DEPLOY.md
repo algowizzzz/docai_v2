@@ -198,6 +198,14 @@ upload it to the `deps` release, then on the server
     # CHECK
     curl -s http://localhost/healthcheck     # -> true
 
+### Option C — RHEL / Rocky / Alma (rpm, offline-friendly)
+
+Everything needed is already mirrored: **`linux-packages/` in this repo** has
+the RabbitMQ + Erlang (el8/el9) + MS-fonts rpms with a step-by-step README,
+and the 674 MB `onlyoffice-documentserver-9.4.0.x86_64.rpm` is on the `deps`
+release. Follow `linux-packages/README.md` — it covers install order,
+PostgreSQL setup and checksum/GPG verification.
+
 ⚠ Step 3 needs `download.onlyoffice.com` reachable. If the proxy blocks it:
 ask whether Artifactory proxies the ONLYOFFICE apt repo (banks often proxy
 Debian repos even when npm is locked down), or mirror the single
